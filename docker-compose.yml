@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+      - "3019:3019"
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=azure_speech_keymanager
+      - DB_PASSWORD=azure_speech_keymanager
+      - DB_NAME=azure_speech_keymanager
+      - REDIS_URL=redis://redis:6379
+      - PORT=3019
+      - FRONTEND_PORT=3000
+      - NEXT_PUBLIC_API_URL=http://localhost:3019
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./logs:/app/logs
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=azure_speech_keymanager
+      - MYSQL_USER=azure_speech_keymanager
+      - MYSQL_PASSWORD=azure_speech_keymanager
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mysql_data:
+  redis_data:

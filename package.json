@@ -1,0 +1,78 @@
+{
+  "name": "azure-speech-keymanager",
+  "version": "1.0.0",
+  "description": "Azure Speech Services Key Manager",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "nodemon --exec ts-node backend/server.ts",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "tsc -p backend/tsconfig.json",
+    "build:frontend": "cd frontend && npm run build",
+    "start": "node dist/server.js",
+    "start:prod": "NODE_ENV=production node dist/server.js",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "setup": "npm install && cd frontend && npm install",
+    "clean": "rm -rf dist logs/*.log",
+    "docker:build": "docker build -t azure-speech-keymanager .",
+    "docker:run": "docker-compose up -d",
+    "docker:stop": "docker-compose down",
+    "db:setup": "mysql -u root -p azure_speech_keymanager < database/init.sql"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.6.1",
+    "mysql2": "^3.6.5",
+    "redis": "^4.7.1",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+
+    "@types/node": "^20.10.4",
+    "@types/redis": "^4.0.11",
+    "@types/uuid": "^9.0.7",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.55.0",
+
+    "nodemon": "^3.0.2",
+
+    "ts-node": "^10.9.1",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "azure",
+    "speech",
+    "tts",
+    "asr",
+    "key-management",
+    "typescript",
+    "express",
+    "nextjs",
+    "mysql",
+    "redis",
+    "api-management",
+    "cooldown-management",
+    "rate-limiting"
+  ],
+  "author": "Azure Speech Key Manager Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/azure-speech-keymanager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/azure-speech-keymanager/issues"
+  },
+  "homepage": "https://github.com/your-username/azure-speech-keymanager#readme"
+}
