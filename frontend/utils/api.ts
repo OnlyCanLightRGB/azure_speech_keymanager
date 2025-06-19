@@ -11,7 +11,8 @@ import {
   TestKeyForm
 } from '../types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+// Use relative path if NEXT_PUBLIC_API_URL is not set (for production)
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // Create axios instance
 const api = axios.create({
