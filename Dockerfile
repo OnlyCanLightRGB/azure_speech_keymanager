@@ -6,11 +6,13 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies
+# Install root dependencies
 COPY package*.json ./
+RUN npm ci && npm cache clean --force
+
+# Install frontend dependencies
 COPY frontend/package*.json ./frontend/
-RUN npm ci --only=production && npm cache clean --force
-RUN cd frontend && npm ci --only=production && npm cache clean --force
+RUN cd frontend && npm ci && npm cache clean --force
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -29,27 +31,35 @@ RUN npm run build:frontend
 FROM base AS runner
 WORKDIR /app
 
-ENV NODE_ENV production
+ENV NODE_ENV=production
+
+# Install wget for health checks
+RUN apk add --no-cache wget
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
+
+# Install production dependencies only
+COPY package*.json ./
+COPY frontend/package*.json ./frontend/
+RUN npm ci --only=production && npm cache clean --force
+RUN cd frontend && npm ci --only=production && npm cache clean --force
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/frontend/.next ./frontend/.next
 COPY --from=builder /app/frontend/public ./frontend/public
-COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/database ./database
 
-# Copy node_modules
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
+# Copy startup script
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh && chown nextjs:nodejs /app/start.sh
 
 USER nextjs
 
 EXPOSE 3019
 EXPOSE 3000
 
-ENV PORT 3019
+ENV PORT=3019
 
-CMD ["npm", "start"]
+CMD ["/app/start.sh"]

@@ -1,48 +1,76 @@
-version: '3.8'
-
 services:
   app:
     build: .
     ports:
-      - "3000:3000"
-      - "3019:3019"
+      - "0.0.0.0:3000:3000"
+      - "0.0.0.0:3019:3019"
     environment:
       - NODE_ENV=production
-      - DB_HOST=mysql
+      - DB_HOST=mysql_azkm
       - DB_PORT=3306
       - DB_USER=azure_speech_keymanager
       - DB_PASSWORD=azure_speech_keymanager
       - DB_NAME=azure_speech_keymanager
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://redis_azkm:6379
       - PORT=3019
       - FRONTEND_PORT=3000
-      - NEXT_PUBLIC_API_URL=http://localhost:3019
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3019}
+      - LOG_LEVEL=info
     depends_on:
-      - mysql
-      - redis
+      mysql_azkm:
+        condition: service_healthy
+      redis_azkm:
+        condition: service_healthy
     volumes:
       - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3019/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - azkm_network
 
-  mysql:
+  mysql_azkm:
     image: mysql:8.0
     environment:
       - MYSQL_ROOT_PASSWORD=rootpassword
       - MYSQL_DATABASE=azure_speech_keymanager
       - MYSQL_USER=azure_speech_keymanager
       - MYSQL_PASSWORD=azure_speech_keymanager
-    ports:
-      - "3306:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql_azkm_data:/var/lib/mysql
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "azure_speech_keymanager", "-pazure_speech_keymanager"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - azkm_network
 
-  redis:
+  redis_azkm:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
-      - redis_data:/data
+      - redis_azkm_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - azkm_network
+
+networks:
+  azkm_network:
+    driver: bridge
 
 volumes:
-  mysql_data:
-  redis_data:
+  mysql_azkm_data:
+  redis_azkm_data:

@@ -10,12 +10,12 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3020'}/api/:path*`
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3019'}/api/:path*`
       }
     ];
   },
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3020'
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3019'
   }
 };
 

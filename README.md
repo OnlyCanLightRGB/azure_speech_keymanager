@@ -139,20 +139,14 @@ npm start
 
 ### Docker部署
 ```bash
-# 使用docker-compose启动所有服务（包括MySQL和Redis）
-docker-compose up -d
 
-# 查看服务状态
-docker-compose ps
-
-# 查看日志
-docker-compose logs -f
+# 构建并启动
+docker-compose build && docker-compose up -d
 
 # 停止服务
 docker-compose down
 ```
 
-**注意**: Docker部署会自动启动MySQL和Redis服务，无需单独安装。
 
 ## 📚 文档
 

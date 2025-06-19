@@ -55,7 +55,19 @@ class Server {
     // CORS configuration
     this.app.use(cors({
       origin: process.env.NODE_ENV === 'production'
-        ? [`http://localhost:${process.env.FRONTEND_PORT || '3000'}`] // Add your production domains
+        ? (origin, callback) => {
+            // Allow requests with no origin (like mobile apps or curl requests)
+            if (!origin) return callback(null, true);
+
+            // Allow localhost and 127.0.0.1 with any port
+            if (origin.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/)) {
+              return callback(null, true);
+            }
+
+            // Allow any origin for external access (you can restrict this in production)
+            // For security, you should replace this with your actual domain(s)
+            return callback(null, true);
+          }
         : true,
       credentials: true
     }));
@@ -244,7 +256,7 @@ class Server {
       this.setupRoutes();
 
       // Start server
-      this.app.listen(this.port, () => {
+      this.app.listen(this.port, '0.0.0.0', () => {
         logger.info(`Server started on port ${this.port}`);
         logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
         logger.info(`Health check: http://localhost:${this.port}/api/health`);
