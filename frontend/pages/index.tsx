@@ -11,7 +11,6 @@ import {
   List,
   ListItem,
   ListItemText,
-  Chip,
   Table,
   TableBody,
   TableCell,
@@ -21,6 +20,7 @@ import {
   Paper,
   LinearProgress,
 } from '@mui/material';
+import SafeChip from '../components/SafeChip';
 import {
   Dashboard as DashboardIcon,
   VpnKey as KeyIcon,
@@ -31,8 +31,8 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
-import { keyApi, systemApi } from '../utils/api';
-import { AzureKey, KeyStatus, KeyStats, CooldownKey } from '../types';
+import { keyApi, systemApi, translationApi } from '../utils/api';
+import { AzureKey, TranslationKey, KeyStatus, KeyStats, CooldownKey } from '../types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 
@@ -40,6 +40,7 @@ dayjs.extend(relativeTime);
 
 const DashboardPage: React.FC = () => {
   const [keys, setKeys] = useState<AzureKey[]>([]);
+  const [translationKeys, setTranslationKeys] = useState<TranslationKey[]>([]);
   const [stats, setStats] = useState<KeyStats | null>(null);
   const [healthStatus, setHealthStatus] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -55,13 +56,15 @@ const DashboardPage: React.FC = () => {
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const [keysData, statsData, healthData] = await Promise.all([
+      const [keysData, translationKeysData, statsData, healthData] = await Promise.all([
         keyApi.getAllKeys(),
+        translationApi.getAllKeys(),
         keyApi.getKeyStats(),
         systemApi.healthCheck().catch(() => ({ success: false, error: 'Health check failed' }))
       ]);
       
       setKeys(keysData);
+      setTranslationKeys(translationKeysData);
       setStats(statsData);
       setHealthStatus(healthData);
     } catch (error: any) {
@@ -71,14 +74,14 @@ const DashboardPage: React.FC = () => {
     }
   };
 
-  // Calculate key statistics
+  // Calculate key statistics (combining speech and translation keys)
   const keyStats = {
-    total: keys.length,
-    enabled: keys.filter(k => k.status === KeyStatus.ENABLED).length,
-    disabled: keys.filter(k => k.status === KeyStatus.DISABLED).length,
-    cooldown: keys.filter(k => k.status === KeyStatus.COOLDOWN).length,
-    totalUsage: keys.reduce((sum, k) => sum + (k.usage_count || 0), 0),
-    totalErrors: keys.reduce((sum, k) => sum + (k.error_count || 0), 0)
+    total: keys.length + translationKeys.length,
+    enabled: keys.filter(k => k.status === KeyStatus.ENABLED).length + translationKeys.filter(k => k.status === KeyStatus.ENABLED).length,
+    disabled: keys.filter(k => k.status === KeyStatus.DISABLED).length + translationKeys.filter(k => k.status === KeyStatus.DISABLED).length,
+    cooldown: keys.filter(k => k.status === KeyStatus.COOLDOWN).length + translationKeys.filter(k => k.status === KeyStatus.COOLDOWN).length,
+    totalUsage: keys.reduce((sum, k) => sum + (k.usage_count || 0), 0) + translationKeys.reduce((sum, k) => sum + (k.usage_count || 0), 0),
+    totalErrors: keys.reduce((sum, k) => sum + (k.error_count || 0), 0) + translationKeys.reduce((sum, k) => sum + (k.error_count || 0), 0)
   };
 
   // Get recent activity (keys with recent usage)
@@ -302,7 +305,7 @@ const DashboardPage: React.FC = () => {
                       primary={key.keyname}
                       secondary={
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip label={key.region} size="small" color="primary" />
+                          <SafeChip label={key.region} size="small" color="primary" />
                           <Typography variant="body2" color="text.secondary">
                             最后使用: {dayjs(key.last_used).fromNow()}
                           </Typography>
@@ -370,10 +373,10 @@ const DashboardPage: React.FC = () => {
                       <TableRow key={key.id}>
                         <TableCell><strong>{key.keyname}</strong></TableCell>
                         <TableCell>
-                          <Chip label={key.region} size="small" color="primary" />
+                          <SafeChip label={key.region} size="small" color="primary" />
                         </TableCell>
                         <TableCell>
-                          <Chip
+                          <SafeChip
                             label={key.status.toUpperCase()}
                             size="small"
                             color={key.status === 'enabled' ? 'success' : key.status === 'disabled' ? 'error' : 'warning'}

@@ -17,10 +17,11 @@ import {
   TableHead,
   TableRow,
   Paper,
-  Chip,
+
   TablePagination,
   InputAdornment,
 } from '@mui/material';
+import SafeChip from '../components/SafeChip';
 import {
   Description as FileTextIcon,
   Refresh as RefreshIcon,
@@ -28,7 +29,7 @@ import {
   FilterAlt as FilterIcon,
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
-import { keyApi } from '../utils/api';
+import { keyApi, translationApi } from '../utils/api';
 import { KeyLog, LogAction, LogsResponse } from '../types';
 import dayjs from 'dayjs';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -45,20 +46,45 @@ const LogsPage: React.FC = () => {
     action: '',
     search: '',
     startDate: '',
-    endDate: ''
+    endDate: '',
+    keyType: 'all' // 'all', 'speech', 'translation'
   });
 
   useEffect(() => {
     loadLogs();
-  }, []); // Remove page and rowsPerPage dependencies for client-side pagination
+  }, [filters.keyType]); // Reload when key type filter changes
 
   const loadLogs = async () => {
     setLoading(true);
     try {
-      // Get all logs for client-side pagination and filtering
-      const data: LogsResponse = await keyApi.getKeyLogs(1, 10000); // Get a large number to get all logs
-      setLogs(data.logs);
-      setTotalCount(data.total);
+      let allLogs: KeyLog[] = [];
+      let totalCount = 0;
+
+      if (filters.keyType === 'all' || filters.keyType === 'speech') {
+        const speechData: LogsResponse = await keyApi.getKeyLogs(1, 10000);
+        // Add key type identifier to speech logs
+        const speechLogs = speechData.logs.map(log => ({ ...log, keyType: 'speech' as const }));
+        allLogs = [...allLogs, ...speechLogs];
+        totalCount += speechData.total;
+      }
+
+      if (filters.keyType === 'all' || filters.keyType === 'translation') {
+        const translationData: LogsResponse = await translationApi.getKeyLogs(1, 10000);
+        // Add key type identifier to translation logs
+        const translationLogs = translationData.logs.map(log => ({ ...log, keyType: 'translation' as const }));
+        allLogs = [...allLogs, ...translationLogs];
+        totalCount += translationData.total;
+      }
+
+      // Sort by created_at descending
+      allLogs.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return dateB - dateA;
+      });
+      
+      setLogs(allLogs);
+      setTotalCount(totalCount);
     } catch (error: any) {
       console.error('Failed to load logs:', error);
     } finally {
@@ -165,6 +191,19 @@ const LogsPage: React.FC = () => {
                 />
 
                 <FormControl size="small" sx={{ minWidth: 150 }}>
+                  <InputLabel>密钥类型</InputLabel>
+                  <Select
+                    value={filters.keyType}
+                    onChange={(e) => setFilters(prev => ({ ...prev, keyType: e.target.value }))}
+                    label="密钥类型"
+                  >
+                    <MenuItem value="all">全部密钥</MenuItem>
+                    <MenuItem value="speech">语音密钥</MenuItem>
+                    <MenuItem value="translation">翻译密钥</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <FormControl size="small" sx={{ minWidth: 150 }}>
                   <InputLabel>按操作筛选</InputLabel>
                   <Select
                     value={filters.action}
@@ -209,7 +248,7 @@ const LogsPage: React.FC = () => {
 
                 <Button
                   startIcon={<FilterIcon />}
-                  onClick={() => setFilters({ action: '', search: '', startDate: '', endDate: '' })}
+                  onClick={() => setFilters({ action: '', search: '', startDate: '', endDate: '', keyType: 'all' })}
                   variant="outlined"
                 >
                   清除筛选
@@ -224,6 +263,7 @@ const LogsPage: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell>时间</TableCell>
+                <TableCell>密钥类型</TableCell>
                 <TableCell>操作</TableCell>
                 <TableCell>密钥名称</TableCell>
                 <TableCell>区域</TableCell>
@@ -239,7 +279,14 @@ const LogsPage: React.FC = () => {
                     {dayjs(log.created_at).format('YYYY-MM-DD HH:mm:ss')}
                   </TableCell>
                   <TableCell>
-                    <Chip
+                    <SafeChip
+                      label={log.keyType === 'translation' ? '翻译密钥' : '语音密钥'}
+                      size="small"
+                      color={log.keyType === 'translation' ? 'secondary' : 'primary'}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <SafeChip
                       label={log.action.replace('_', ' ').toUpperCase()}
                       size="small"
                       color={getActionColor(log.action) as any}
@@ -248,14 +295,14 @@ const LogsPage: React.FC = () => {
                   <TableCell>{log.keyname || '无'}</TableCell>
                   <TableCell>
                     {log.region ? (
-                      <Chip label={log.region} size="small" color="primary" />
+                      <SafeChip label={log.region} size="small" color="primary" />
                     ) : (
                       '无'
                     )}
                   </TableCell>
                   <TableCell>
                     {log.status_code ? (
-                      <Chip
+                      <SafeChip
                         label={log.status_code}
                         size="small"
                         color={getStatusCodeColor(log.status_code) as any}

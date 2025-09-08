@@ -17,8 +17,10 @@ import {
   Menu as MenuIcon,
   Dashboard as DashboardIcon,
   VpnKey as KeyIcon,
+  Translate as TranslateIcon,
   Description as LogsIcon,
   Settings as SettingsIcon,
+  CloudUpload as UploadIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -46,7 +48,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       path: '/keys',
       icon: <KeyIcon />,
-      label: '密钥管理',
+      label: '语音密钥管理',
+    },
+    {
+      path: '/translation',
+      icon: <TranslateIcon />,
+      label: '翻译密钥管理',
+    },
+    {
+      path: '/upload',
+      icon: <UploadIcon />,
+      label: 'JSON上传管理',
     },
     {
       path: '/logs',

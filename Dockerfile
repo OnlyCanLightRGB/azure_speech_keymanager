@@ -4,6 +4,8 @@ FROM node:18-alpine AS base
 # Install dependencies only when needed
 FROM base AS deps
 RUN apk add --no-cache libc6-compat
+# Set locale and encoding for proper UTF-8 support
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 WORKDIR /app
 
 # Install root dependencies
@@ -16,6 +18,10 @@ RUN cd frontend && npm ci && npm cache clean --force
 
 # Rebuild the source code only when needed
 FROM base AS builder
+# Set locale and encoding for proper UTF-8 support
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+# Increase Node.js memory limit for build
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
@@ -24,8 +30,8 @@ COPY . .
 # Build backend
 RUN npm run build:backend
 
-# Build frontend
-RUN npm run build:frontend
+# Build frontend with better error handling
+RUN cd frontend && npm run build
 
 # Production image, copy all the files and run the app
 FROM base AS runner
@@ -54,6 +60,9 @@ COPY --from=builder /app/database ./database
 # Copy startup script
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh && chown nextjs:nodejs /app/start.sh
+
+# Create logs directory with proper permissions
+RUN mkdir -p /app/logs && chown -R nextjs:nodejs /app/logs
 
 USER nextjs
 

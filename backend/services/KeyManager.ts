@@ -12,7 +12,7 @@ export class KeyManager {
   constructor(database: mysql.Pool) {
     this.db = database;
     this.lockService = new RedisLockService();
-    this.cooldownManager = new RedisCooldownManager(this);
+    this.cooldownManager = new RedisCooldownManager(this, 'speech');
     this.cooldownManager.start();
   }
 
@@ -51,6 +51,8 @@ export class KeyManager {
           logger.warn(`Key ${this.maskKey(key.key)} is in cooldown, skipping`);
           return null;
         }
+
+
 
         // Update usage statistics
         await connection.execute(
@@ -487,11 +489,16 @@ export class KeyManager {
    * Get all keys with their status
    */
   async getAllKeys(): Promise<AzureKey[]> {
-    const [rows] = await this.db.execute<mysql.RowDataPacket[]>(
-      'SELECT * FROM azure_keys ORDER BY created_at DESC'
-    );
+    try {
+      const [rows] = await this.db.execute<mysql.RowDataPacket[]>(
+        'SELECT * FROM azure_keys ORDER BY created_at DESC'
+      );
 
-    return rows as AzureKey[];
+      return rows as AzureKey[];
+    } catch (error) {
+      logger.error('Error getting all keys:', error);
+      throw error;
+    }
   }
 
   /**
@@ -599,6 +606,8 @@ export class KeyManager {
   getCooldownManager(): RedisCooldownManager {
     return this.cooldownManager;
   }
+
+
 
   /**
    * Sync database and Redis cooldown states

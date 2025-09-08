@@ -11,9 +11,11 @@ export class RedisCooldownManager {
   private readonly COOLDOWN_PREFIX = 'cooldown:';
   private readonly PROTECTION_PREFIX = 'protection:';
   private readonly PROTECTION_PERIOD = 5000; // 5 seconds in milliseconds
+  private readonly keyType: string; // 'speech' or 'translation'
 
-  constructor(keyManager: any) {
+  constructor(keyManager: any, keyType: string = 'speech') {
     this.keyManager = keyManager;
+    this.keyType = keyType;
     this.redis = RedisConnection.getInstance().getClient();
   }
 
@@ -104,14 +106,14 @@ export class RedisCooldownManager {
    * Used when protection period has already been checked in KeyManager
    */
   async addKeyToCooldownDirect(key: string, cooldownSeconds: number = 300): Promise<void> {
-    const cooldownKey = this.COOLDOWN_PREFIX + key;
+    const cooldownKey = this.COOLDOWN_PREFIX + this.keyType + ':' + key;
     const cooldownUntil = Date.now() + (cooldownSeconds * 1000);
 
     try {
       await this.redis.set(cooldownKey, cooldownUntil.toString(), 'PX', cooldownSeconds * 1000);
-      logger.info(`Key ${this.maskKey(key)} added to cooldown for ${cooldownSeconds} seconds`);
+      logger.info(`${this.keyType} key ${this.maskKey(key)} added to cooldown for ${cooldownSeconds} seconds`);
     } catch (error) {
-      logger.error(`Error adding key ${this.maskKey(key)} to cooldown:`, error);
+      logger.error(`Error adding ${this.keyType} key ${this.maskKey(key)} to cooldown:`, error);
       throw error;
     }
   }
@@ -120,7 +122,7 @@ export class RedisCooldownManager {
    * Remove a key from cooldown manually
    */
   async removeKeyFromCooldown(key: string): Promise<boolean> {
-    const cooldownKey = this.COOLDOWN_PREFIX + key;
+    const cooldownKey = this.COOLDOWN_PREFIX + this.keyType + ':' + key;
     
     try {
       const result = await this.redis.del(cooldownKey);
@@ -129,12 +131,12 @@ export class RedisCooldownManager {
       if (removed) {
         // Set protection period when cooldown ends
         await this.setProtectionPeriod(key);
-        logger.info(`Key ${this.maskKey(key)} manually removed from cooldown`);
+        logger.info(`${this.keyType} key ${this.maskKey(key)} manually removed from cooldown`);
       }
       
       return removed;
     } catch (error) {
-      logger.error(`Error removing key ${this.maskKey(key)} from cooldown:`, error);
+      logger.error(`Error removing ${this.keyType} key ${this.maskKey(key)} from cooldown:`, error);
       return false;
     }
   }
@@ -143,7 +145,7 @@ export class RedisCooldownManager {
    * Check if a key is in cooldown
    */
   async isKeyInCooldown(key: string): Promise<boolean> {
-    const cooldownKey = this.COOLDOWN_PREFIX + key;
+    const cooldownKey = this.COOLDOWN_PREFIX + this.keyType + ':' + key;
 
     try {
       const cooldownUntil = await this.redis.get(cooldownKey);
@@ -162,9 +164,9 @@ export class RedisCooldownManager {
         // Immediately enable the key instead of waiting for monitor
         try {
           await this.keyManager.enableKeyFromCooldown(key);
-          logger.info(`Key ${this.maskKey(key)} cooldown expired, immediately enabled`);
+          logger.info(`${this.keyType} key ${this.maskKey(key)} cooldown expired, immediately enabled`);
         } catch (error) {
-          logger.error(`Failed to immediately enable key ${this.maskKey(key)} after cooldown:`, error);
+          logger.error(`Failed to immediately enable ${this.keyType} key ${this.maskKey(key)} after cooldown:`, error);
         }
 
         return false;
@@ -172,7 +174,7 @@ export class RedisCooldownManager {
 
       return true;
     } catch (error) {
-      logger.error(`Error checking cooldown for key ${this.maskKey(key)}:`, error);
+      logger.error(`Error checking cooldown for ${this.keyType} key ${this.maskKey(key)}:`, error);
       return false;
     }
   }
@@ -181,13 +183,13 @@ export class RedisCooldownManager {
    * Check if a key is in protection period (5 seconds after cooldown ends)
    */
   async isKeyInProtectionPeriod(key: string): Promise<boolean> {
-    const protectionKey = this.PROTECTION_PREFIX + key;
+    const protectionKey = this.PROTECTION_PREFIX + this.keyType + ':' + key;
     
     try {
       const exists = await this.redis.exists(protectionKey);
       return exists === 1;
     } catch (error) {
-      logger.error(`Error checking protection period for key ${this.maskKey(key)}:`, error);
+      logger.error(`Error checking protection period for ${this.keyType} key ${this.maskKey(key)}:`, error);
       return false;
     }
   }
@@ -196,13 +198,13 @@ export class RedisCooldownManager {
    * Set protection period for a key
    */
   private async setProtectionPeriod(key: string): Promise<void> {
-    const protectionKey = this.PROTECTION_PREFIX + key;
+    const protectionKey = this.PROTECTION_PREFIX + this.keyType + ':' + key;
     
     try {
       await this.redis.set(protectionKey, '1', 'PX', this.PROTECTION_PERIOD);
-      logger.debug(`Protection period set for key ${this.maskKey(key)}`);
+      logger.debug(`Protection period set for ${this.keyType} key ${this.maskKey(key)}`);
     } catch (error) {
-      logger.error(`Error setting protection period for key ${this.maskKey(key)}:`, error);
+      logger.error(`Error setting protection period for ${this.keyType} key ${this.maskKey(key)}:`, error);
     }
   }
 
@@ -210,7 +212,7 @@ export class RedisCooldownManager {
    * Get remaining cooldown time for a key in seconds
    */
   async getRemainingCooldownTime(key: string): Promise<number> {
-    const cooldownKey = this.COOLDOWN_PREFIX + key;
+    const cooldownKey = this.COOLDOWN_PREFIX + this.keyType + ':' + key;
     
     try {
       const cooldownUntil = await this.redis.get(cooldownKey);
@@ -231,13 +233,14 @@ export class RedisCooldownManager {
    */
   async getCooldownKeys(): Promise<CooldownKey[]> {
     try {
-      const pattern = this.COOLDOWN_PREFIX + '*';
+      const pattern = this.COOLDOWN_PREFIX + this.keyType + ':*';
       const keys = await this.redis.keys(pattern);
       const result: CooldownKey[] = [];
       const now = Date.now();
+      const prefixToRemove = this.COOLDOWN_PREFIX + this.keyType + ':';
 
       for (const cooldownKey of keys) {
-        const key = cooldownKey.replace(this.COOLDOWN_PREFIX, '');
+        const key = cooldownKey.replace(prefixToRemove, '');
         const cooldownUntil = await this.redis.get(cooldownKey);
         
         if (cooldownUntil && parseInt(cooldownUntil) > now) {
@@ -250,7 +253,7 @@ export class RedisCooldownManager {
 
       return result;
     } catch (error) {
-      logger.error('Error getting cooldown keys:', error);
+      logger.error(`Error getting ${this.keyType} cooldown keys:`, error);
       return [];
     }
   }
@@ -260,11 +263,12 @@ export class RedisCooldownManager {
    */
   private async getAllCooldownKeys(): Promise<string[]> {
     try {
-      const pattern = this.COOLDOWN_PREFIX + '*';
+      const pattern = this.COOLDOWN_PREFIX + this.keyType + ':*';
       const keys = await this.redis.keys(pattern);
-      return keys.map((key: string) => key.replace(this.COOLDOWN_PREFIX, ''));
+      const prefixToRemove = this.COOLDOWN_PREFIX + this.keyType + ':';
+      return keys.map((key: string) => key.replace(prefixToRemove, ''));
     } catch (error) {
-      logger.error('Error getting all cooldown keys:', error);
+      logger.error(`Error getting all ${this.keyType} cooldown keys:`, error);
       return [];
     }
   }
@@ -295,7 +299,7 @@ export class RedisCooldownManager {
     }
 
     try {
-      const pattern = this.COOLDOWN_PREFIX + '*';
+      const pattern = this.COOLDOWN_PREFIX + this.keyType + ':*';
       const redisKeys = await this.redis.keys(pattern);
       const now = Date.now();
       const keysToEnable: string[] = [];
@@ -306,15 +310,21 @@ export class RedisCooldownManager {
 
         // Find expired keys in Redis
         for (const cooldownKey of redisKeys) {
-          const key = cooldownKey.replace(this.COOLDOWN_PREFIX, '');
+          // Extract the actual key by removing the full prefix (cooldown:keyType:)
+          const keyWithType = cooldownKey.replace(this.COOLDOWN_PREFIX, '');
+          if (!keyWithType.startsWith(this.keyType + ':')) {
+            // Skip keys that don't belong to this manager's keyType
+            continue;
+          }
+          const key = keyWithType.replace(this.keyType + ':', '');
           const cooldownUntil = await this.redis.get(cooldownKey);
 
           if (cooldownUntil && now >= parseInt(cooldownUntil)) {
             keysToEnable.push(key);
-            logger.info(`Monitor found expired Redis key: ${this.maskKey(key)} (${now} >= ${parseInt(cooldownUntil)})`);
+            logger.info(`Monitor found expired Redis key: ${this.maskKey(key)} (type: ${this.keyType}) (${now} >= ${parseInt(cooldownUntil)})`);
           } else if (cooldownUntil) {
             const remaining = Math.ceil((parseInt(cooldownUntil) - now) / 1000);
-            logger.debug(`Key ${this.maskKey(key)} has ${remaining}s remaining`);
+            logger.debug(`Key ${this.maskKey(key)} (type: ${this.keyType}) has ${remaining}s remaining`);
           }
         }
       }
@@ -337,7 +347,7 @@ export class RedisCooldownManager {
         for (const key of keysToEnable) {
           try {
             // Remove from cooldown and set protection period
-            const cooldownKey = this.COOLDOWN_PREFIX + key;
+            const cooldownKey = this.COOLDOWN_PREFIX + this.keyType + ':' + key;
             await this.redis.del(cooldownKey);
             await this.setProtectionPeriod(key);
 
@@ -368,23 +378,37 @@ export class RedisCooldownManager {
       // We'll implement this by checking database directly
       const db = (this.keyManager as any).db; // Access private db property
 
-      const [rows] = await db.execute(
-        'SELECT `key` FROM azure_keys WHERE status = ?',
-        ['cooldown']
-      );
+      // Only check the table corresponding to this manager's keyType
+      let rows;
+      if (this.keyType === 'speech') {
+        const [azureRows] = await db.execute(
+          'SELECT `key` FROM azure_keys WHERE status = ?',
+          ['cooldown']
+        );
+        rows = azureRows;
+      } else if (this.keyType === 'translation') {
+        const [translationRows] = await db.execute(
+          'SELECT `key` FROM translation_keys WHERE status = ?',
+          ['cooldown']
+        );
+        rows = translationRows;
+      } else {
+        logger.warn(`Unknown keyType: ${this.keyType}, skipping orphaned key check`);
+        return [];
+      }
 
       const orphanedKeys: string[] = [];
 
       for (const row of rows) {
         const key = row.key;
-        const cooldownKey = this.COOLDOWN_PREFIX + key;
+        const cooldownKey = this.COOLDOWN_PREFIX + this.keyType + ':' + key;
 
         // Check if this key exists in Redis
         const exists = await this.redis.exists(cooldownKey);
         if (exists === 0) {
           // Key is in cooldown in DB but not in Redis - it's orphaned
           orphanedKeys.push(key);
-          logger.info(`Found orphaned cooldown key: ${this.maskKey(key)}`);
+          logger.info(`Found orphaned cooldown key: ${this.maskKey(key)} (type: ${this.keyType})`);
         }
       }
 

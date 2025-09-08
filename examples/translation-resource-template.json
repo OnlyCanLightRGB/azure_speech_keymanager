@@ -1,0 +1,29 @@
+{
+  "type": "translation",
+  "keys": [
+    {
+      "key": "your_azure_translation_subscription_key_here_32_chars",
+      "region": "global",
+      "keyname": "TranslationKey-Production-001",
+      "status": "enabled",
+      "endpoint": "https://api.cognitive.microsofttranslator.com/",
+      "apiVersion": "3.0",
+      "features": ["translation", "speech-translation", "custom-translator"]
+    },
+    {
+      "key": "your_azure_translation_subscription_key_here_32_chars_2",
+      "region": "eastasia",
+      "keyname": "TranslationKey-Production-002",
+      "status": "enabled",
+      "endpoint": "https://eastasia.api.cognitive.microsoft.com/",
+      "apiVersion": "3.0",
+      "features": ["translation", "speech-translation", "document-translation"]
+    }
+  ],
+  "options": {
+    "overwrite": false,
+    "validateBeforeCreate": true,
+    "enableAfterCreate": true,
+    "setDefaultRegion": false
+  }
+}

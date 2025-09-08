@@ -4,7 +4,7 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
+
   Dialog,
   DialogActions,
   DialogContent,
@@ -32,6 +32,7 @@ import {
   ListItemIcon,
   ListItemText,
 } from '@mui/material';
+import SafeChip from '../components/SafeChip';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -44,9 +45,11 @@ import {
   MoreVert as MoreVertIcon,
   GetApp as ExportIcon,
   SelectAll as SelectAllIcon,
+  BugReport as ScriptIcon,
+  CleaningServices as CleanupIcon,
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
-import { keyApi } from '../utils/api';
+import { keyApi, scriptsApi } from '../utils/api';
 import { AzureKey, KeyStatus, REGIONS, AddKeyForm, TestKeyForm, EditKeyForm } from '../types';
 import dayjs from 'dayjs';
 
@@ -62,6 +65,9 @@ const KeysPage: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [bulkMenuAnchor, setBulkMenuAnchor] = useState<null | HTMLElement>(null);
+  const [scriptRunning, setScriptRunning] = useState(false);
+  const [scriptResultModalVisible, setScriptResultModalVisible] = useState(false);
+  const [scriptResult, setScriptResult] = useState<any>(null);
 
   // Form states
   const [addFormData, setAddFormData] = useState<AddKeyForm>({ key: '', region: '', keyname: '' });
@@ -177,6 +183,47 @@ const KeysPage: React.FC = () => {
       loadKeys();
     } catch (error: any) {
       showSnackbar(`更新密钥失败: ${error.message}`, 'error');
+    }
+  };
+
+  // Script execution functions
+  const handleRunCooldownTest = async () => {
+    setScriptRunning(true);
+    try {
+      const result = await scriptsApi.runCooldownTest('speech');
+      setScriptResult({
+        type: 'cooldown-test',
+        title: '语音密钥冷却测试',
+        ...result
+      });
+      setScriptResultModalVisible(true);
+      showSnackbar('语音密钥冷却测试执行成功');
+      // 刷新密钥列表以查看可能的状态变化
+      loadKeys();
+    } catch (error: any) {
+      showSnackbar(`执行语音密钥冷却测试失败: ${error.message}`, 'error');
+    } finally {
+      setScriptRunning(false);
+    }
+  };
+
+  const handleRunCleanup = async () => {
+    setScriptRunning(true);
+    try {
+      const result = await scriptsApi.runCleanup();
+      setScriptResult({
+        type: 'cleanup',
+        title: '系统清理',
+        ...result
+      });
+      setScriptResultModalVisible(true);
+      showSnackbar('系统清理执行成功');
+      // 刷新密钥列表以查看可能的变化
+      loadKeys();
+    } catch (error: any) {
+      showSnackbar(`执行系统清理失败: ${error.message}`, 'error');
+    } finally {
+      setScriptRunning(false);
     }
   };
 
@@ -355,6 +402,24 @@ const KeysPage: React.FC = () => {
             >
               导出CSV
             </Button>
+            <Button
+              startIcon={<ScriptIcon />}
+              onClick={handleRunCooldownTest}
+              variant="outlined"
+              color="secondary"
+              disabled={scriptRunning}
+            >
+              {scriptRunning ? '执行中...' : '冷却测试'}
+            </Button>
+            <Button
+              startIcon={<CleanupIcon />}
+              onClick={handleRunCleanup}
+              variant="outlined"
+              color="warning"
+              disabled={scriptRunning}
+            >
+              {scriptRunning ? '执行中...' : '系统清理'}
+            </Button>
             {selectedKeys.length > 0 && (
               <>
                 <Typography variant="body2" color="text.secondary">
@@ -416,10 +481,10 @@ const KeysPage: React.FC = () => {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Chip label={key.region} size="small" color="primary" />
+                    <SafeChip label={key.region} size="small" color="primary" />
                   </TableCell>
                   <TableCell>
-                    <Chip
+                    <SafeChip
                       label={key.status.toUpperCase()}
                       size="small"
                       color={key.status === 'enabled' ? 'success' : key.status === 'disabled' ? 'error' : 'warning'}
@@ -608,6 +673,63 @@ const KeysPage: React.FC = () => {
               disabled={!editFormData.keyname || !editFormData.region}
             >
               更新密钥
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Script Result Dialog */}
+        <Dialog 
+          open={scriptResultModalVisible} 
+          onClose={() => setScriptResultModalVisible(false)} 
+          maxWidth="md" 
+          fullWidth
+        >
+          <DialogTitle>
+            {scriptResult?.title || '脚本执行结果'}
+          </DialogTitle>
+          <DialogContent>
+            <Box sx={{ pt: 1 }}>
+              {scriptResult && (
+                <>
+                  <Typography variant="h6" gutterBottom>
+                    执行状态: {scriptResult.exitCode === 0 ? '成功' : '失败'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    执行时间: {scriptResult.timestamp ? new Date(scriptResult.timestamp).toLocaleString() : '未知'}
+                  </Typography>
+                  
+                  {scriptResult.output && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        输出信息:
+                      </Typography>
+                      <Paper sx={{ p: 2, bgcolor: 'grey.100', maxHeight: 300, overflow: 'auto' }}>
+                        <Typography variant="body2" component="pre" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                          {scriptResult.output}
+                        </Typography>
+                      </Paper>
+                    </Box>
+                  )}
+                  
+                  {scriptResult.error && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom color="error">
+                        错误信息:
+                      </Typography>
+                      <Paper sx={{ p: 2, bgcolor: 'error.light', maxHeight: 200, overflow: 'auto' }}>
+                        <Typography variant="body2" component="pre" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', color: 'error.contrastText' }}>
+                          {scriptResult.error}
+                        </Typography>
+                      </Paper>
+                    </Box>
+                  )}
+                </>
+              )}
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setScriptResultModalVisible(false)}>
+              关闭
             </Button>
           </DialogActions>
         </Dialog>

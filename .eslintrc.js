@@ -13,7 +13,8 @@ module.exports = {
   parserOptions: {
     ecmaVersion: 2022,
     sourceType: 'module',
-    project: ['./backend/tsconfig.json', './frontend/tsconfig.json'],
+    // Remove project references to avoid Docker build issues
+    // project: ['./backend/tsconfig.json', './frontend/tsconfig.json'],
   },
   plugins: [
     '@typescript-eslint',

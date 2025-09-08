@@ -1,0 +1,29 @@
+{
+  "type": "speech",
+  "keys": [
+    {
+      "key": "your_azure_speech_subscription_key_here_32_chars",
+      "region": "eastasia",
+      "keyname": "SpeechKey-Production-001",
+      "status": "enabled",
+      "endpoint": "https://eastasia.api.cognitive.microsoft.com/",
+      "apiVersion": "2023-12-01-preview",
+      "features": ["speech", "tts", "stt", "conversation-transcription"]
+    },
+    {
+      "key": "your_azure_speech_subscription_key_here_32_chars_2",
+      "region": "westus",
+      "keyname": "SpeechKey-Production-002",
+      "status": "enabled",
+      "endpoint": "https://westus.api.cognitive.microsoft.com/",
+      "apiVersion": "2023-12-01-preview",
+      "features": ["speech", "tts", "stt", "custom-speech"]
+    }
+  ],
+  "options": {
+    "overwrite": false,
+    "validateBeforeCreate": true,
+    "enableAfterCreate": true,
+    "setDefaultRegion": false
+  }
+}

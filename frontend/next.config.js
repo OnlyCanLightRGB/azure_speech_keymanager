@@ -26,6 +26,11 @@ const nextConfig = {
       }
     ];
   },
+  // 增加服务器配置以处理长时间运行的请求
+  serverRuntimeConfig: {
+    // 增加请求超时时间
+    requestTimeout: 120000 // 2分钟
+  },
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || ''
   }

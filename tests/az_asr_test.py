@@ -910,11 +910,17 @@ if __name__ == "__main__":
 
     # 检查ASR音频文件
     asr_file_ok = False
-    if not os.path.exists(ASR_AUDIO_FILE) or not os.path.isfile(ASR_AUDIO_FILE):
+    # 检查相对于当前目录和tests目录的音频文件
+    audio_paths = [ASR_AUDIO_FILE, f"tests/{ASR_AUDIO_FILE}"]
+    for audio_path in audio_paths:
+        if os.path.exists(audio_path) and os.path.isfile(audio_path):
+            asr_file_ok = True
+            ASR_AUDIO_FILE = audio_path  # 更新为正确的路径
+            print(f"ASR音频文件检查正常：{ASR_AUDIO_FILE}")
+            break
+    
+    if not asr_file_ok:
         print(f"错误：在'{ASR_AUDIO_FILE}'未找到有效的ASR音频文件。ASR测试将被跳过。")
-    else:
-        asr_file_ok = True
-        print(f"ASR音频文件检查正常：{ASR_AUDIO_FILE}")
 
     # 检查Key Manager API连接
     try:
@@ -923,10 +929,10 @@ if __name__ == "__main__":
             print("Key Manager API连接正常")
         else:
             print(f"Key Manager API连接失败: {result.get('error', '未知错误')}")
-            print("请确保Key Manager服务正在运行在 http://localhost:3000")
+            print("请确保Key Manager服务正在运行在 http://localhost:3019")
     except Exception as e:
         print(f"Key Manager API连接异常: {e}")
-        print("请确保Key Manager服务正在运行在 http://localhost:3000")
+        print("请确保Key Manager服务正在运行在 http://localhost:3019")
 
     # 执行ASR测试
     if asr_file_ok:

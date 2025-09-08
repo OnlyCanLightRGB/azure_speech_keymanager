@@ -1,0 +1,9 @@
+request_num,acquire_timestamp,acquire_status_code,acquire_success,acquire_response_time_ms,acquire_error,request_id,release_timestamp,release_status_code,release_success,release_response_time_ms,release_error
+1,2025-09-05T15:21:44.013169,200,True,10.89,,1757056904010-0frnb04zs,2025-09-05T15:21:47.025977,200,True,11.58,
+2,2025-09-05T15:21:44.013294,200,True,10.93,,1757056904011-2olrsiqtz,2025-09-05T15:21:47.026352,200,True,11.53,
+3,2025-09-05T15:21:44.013359,200,True,10.96,,1757056904011-mvb2si7u3,2025-09-05T15:21:47.026427,200,True,11.51,
+4,2025-09-05T15:21:44.014030,429,False,11.6,Too Many Requests - Concurrent limit reached,,,,,,
+5,2025-09-05T15:21:44.014155,429,False,11.69,Too Many Requests - Concurrent limit reached,,,,,,
+6,2025-09-05T15:21:44.014288,429,False,11.6,Too Many Requests - Concurrent limit reached,,,,,,
+7,2025-09-05T15:21:44.014921,429,False,12.21,Too Many Requests - Concurrent limit reached,,,,,,
+8,2025-09-05T15:21:44.015026,429,False,12.28,Too Many Requests - Concurrent limit reached,,,,,,

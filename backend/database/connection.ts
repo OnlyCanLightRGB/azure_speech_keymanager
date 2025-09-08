@@ -61,6 +61,22 @@ class DatabaseConnection {
         INDEX idx_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+      CREATE TABLE IF NOT EXISTS translation_keys (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        \`key\` VARCHAR(255) NOT NULL UNIQUE,
+        region VARCHAR(50) NOT NULL,
+        keyname VARCHAR(255) NOT NULL DEFAULT '',
+        status ENUM('enabled', 'disabled', 'cooldown') NOT NULL DEFAULT 'enabled',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        last_used TIMESTAMP NULL,
+        usage_count INT DEFAULT 0,
+        error_count INT DEFAULT 0,
+        INDEX idx_status_region (status, region),
+        INDEX idx_region (region),
+        INDEX idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
       CREATE TABLE IF NOT EXISTS key_logs (
         id INT AUTO_INCREMENT PRIMARY KEY,
         key_id INT,
@@ -71,6 +87,21 @@ class DatabaseConnection {
         ip_address VARCHAR(45),
         user_agent TEXT,
         FOREIGN KEY (key_id) REFERENCES azure_keys(id) ON DELETE SET NULL,
+        INDEX idx_created_at (created_at),
+        INDEX idx_action (action),
+        INDEX idx_key_id (key_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+      CREATE TABLE IF NOT EXISTS translation_key_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        key_id INT,
+        action ENUM('get_key', 'set_status', 'add_key', 'delete_key', 'disable_key', 'enable_key', 'test_key', 'cooldown_start', 'cooldown_end') NOT NULL,
+        status_code INT NULL,
+        note TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        ip_address VARCHAR(45),
+        user_agent TEXT,
+        FOREIGN KEY (key_id) REFERENCES translation_keys(id) ON DELETE SET NULL,
         INDEX idx_created_at (created_at),
         INDEX idx_action (action),
         INDEX idx_key_id (key_id)

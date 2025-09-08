@@ -7,7 +7,7 @@ config();
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?
   process.env.NEXT_PUBLIC_API_URL + '/api' :
-  'http://localhost:3002/api';
+  'http://localhost:3019/api';
 
 class AzureKeyManager {
   constructor(baseUrl = API_BASE_URL) {
@@ -62,8 +62,9 @@ const mysql = require('mysql2/promise');
 async function readRedisState(key) {
   const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
   try {
-    const cooldownKey = `cooldown:${key}`;
-    const protectionKey = `protection:${key}`;
+    // 使用正确的Redis键格式（匹配RedisCooldownManager的speech类型格式）
+    const cooldownKey = `cooldown:speech:${key}`;
+    const protectionKey = `protection:speech:${key}`;
 
     const cooldownUntil = await redis.get(cooldownKey);
     const protectionTTL = await redis.ttl(protectionKey);
@@ -84,8 +85,8 @@ async function readDBState(key) {
   const db = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '3306'),
-    user: process.env.DB_USER || 'azure_speech_keymanager',
-    password: process.env.DB_PASSWORD || 'azure_speech_keymanager',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'azure_speech_keymanager'
   });
 
@@ -117,8 +118,10 @@ async function testCooldownRecovery() {
       return;
     }
 
-    const testKey = enabledKeys[0];
-    console.log(`✅ 使用测试key: ${testKey.keyname} (${testKey.key.substring(0, 8)}...)`);
+    // 随机选择一个可用密钥进行测试，避免总是测试同一个密钥
+    const randomIndex = Math.floor(Math.random() * enabledKeys.length);
+    const testKey = enabledKeys[randomIndex];
+    console.log(`✅ 使用测试语音密钥 [${randomIndex + 1}/${enabledKeys.length}]: ${testKey.keyname} (${testKey.key.substring(0, 8)}...)`);
 
     // 2. 检查初始状态
     console.log('\n2. 检查初始状态...');
@@ -173,7 +176,7 @@ async function testCooldownRecovery() {
     console.log('\n5. 监控冷却恢复过程...');
     let recovered = false;
     let checkCount = 0;
-    const maxChecks = 15; // 最多检查15秒
+    const maxChecks = 25; // 最多检查25秒
 
     while (!recovered && checkCount < maxChecks) {
       checkCount++;

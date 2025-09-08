@@ -1,0 +1,6 @@
+{
+  "appId": "YOUR_APP_ID_HERE",
+  "displayName": "azure-cli-example",
+  "password": "YOUR_PASSWORD_HERE",
+  "tenant": "YOUR_TENANT_ID_HERE"
+}

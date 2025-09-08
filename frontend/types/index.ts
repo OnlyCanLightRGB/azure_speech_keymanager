@@ -11,6 +11,20 @@ export interface AzureKey {
   error_count?: number;
 }
 
+export interface TranslationKey {
+  id?: number;
+  key: string;
+  region: string;
+  keyname: string;
+  status: KeyStatus;
+  created_at?: string;
+  updated_at?: string;
+  last_used?: string;
+  usage_count?: number;
+  error_count?: number;
+  endpoint?: string;
+}
+
 export enum KeyStatus {
   ENABLED = 'enabled',
   DISABLED = 'disabled',
@@ -28,6 +42,7 @@ export interface KeyLog {
   user_agent?: string;
   keyname?: string;
   region?: string;
+  keyType?: 'speech' | 'translation';
 }
 
 export enum LogAction {
@@ -80,7 +95,11 @@ export interface LogsResponse {
 
 export interface TestKeyResult {
   statusCode: number;
-  audioSize: number;
+  audioSize?: number;
+  translatedText?: string;
+  detectedLanguage?: string;
+  transcription?: string;
+  recognitionStatus?: string;
   error?: string;
 }
 
@@ -182,3 +201,159 @@ export const ACTION_COLORS = {
   [LogAction.COOLDOWN_START]: 'orange',
   [LogAction.COOLDOWN_END]: 'green'
 };
+
+// 实时创建资源key相关类型
+export interface ResourceKeyCreationRequest {
+  type: 'speech' | 'translation';
+  keys: ResourceKeyItem[];
+  options?: ResourceCreationOptions;
+}
+
+export interface ResourceKeyItem {
+  key: string;
+  region: string;
+  keyname?: string;
+  status?: KeyStatus;
+  endpoint?: string;
+  apiVersion?: string;
+  features?: string[];
+}
+
+export interface ResourceCreationOptions {
+  overwrite?: boolean;
+  validateBeforeCreate?: boolean;
+  enableAfterCreate?: boolean;
+  setDefaultRegion?: boolean;
+}
+
+export interface ResourceKeyCreationResponse {
+  success: boolean;
+  data: {
+    total: number;
+    success: number;
+    failed: number;
+    results: ResourceKeyCreationResult[];
+    createdKeys: (AzureKey | TranslationKey)[];
+  };
+  message: string;
+}
+
+export interface ResourceKeyCreationResult {
+  key: string;
+  success: boolean;
+  message: string;
+  error?: string;
+  resourceId?: string;
+  endpoint?: string;
+}
+
+// 资源验证相关类型
+export interface ResourceValidationRequest {
+  type: 'speech' | 'translation';
+  keys: ResourceKeyItem[];
+}
+
+export interface ResourceValidationResponse {
+  success: boolean;
+  data: {
+    total: number;
+    valid: number;
+    invalid: number;
+    results: ResourceValidationResult[];
+  };
+  message: string;
+}
+
+export interface ResourceValidationResult {
+  key: string;
+  valid: boolean;
+  message: string;
+  error?: string;
+  region?: string;
+  endpoint?: string;
+}
+
+// 账单监控相关类型定义
+export interface BillingMonitoringRequest {
+  subscriptionId: string;
+  keys: BillingKeyItem[];
+  options?: BillingMonitoringOptions;
+}
+
+export interface BillingKeyItem {
+  key: string;
+  region: string;
+  keyname: string;
+  type: 'speech' | 'translation';
+  resourceId?: string;
+}
+
+export interface BillingMonitoringOptions {
+  interval?: number; // 监控间隔（分钟）
+  threshold?: number; // 费用阈值
+  enableAlerts?: boolean; // 启用告警
+  autoReport?: boolean; // 自动生成报告
+}
+
+export interface BillingMonitoringResponse {
+  success: boolean;
+  data: {
+    taskId: string;
+    subscriptionId: string;
+    monitoredKeys: number;
+    interval: number;
+    startTime: string;
+  };
+  message: string;
+}
+
+export interface KeyBillingInfo {
+  key: string;
+  keyname: string;
+  type: 'speech' | 'translation';
+  region: string;
+  cost: number;
+  currency: string;
+  usage: {
+    requests: number;
+    characters?: number; // 翻译服务
+    audioMinutes?: number; // 语音服务
+  };
+  lastUpdated: string;
+}
+
+export interface BillingReport {
+  subscriptionId: string;
+  reportDate: string;
+  totalCost: number;
+  currency: string;
+  keyDetails: KeyBillingInfo[];
+  summary: {
+    speechKeys: number;
+    translationKeys: number;
+    totalRequests: number;
+    averageCostPerKey: number;
+  };
+}
+
+export interface BillingAnomaly {
+  type: 'cost_spike' | 'unusual_usage' | 'threshold_exceeded';
+  severity: 'low' | 'medium' | 'high';
+  message: string;
+  affectedKeys: string[];
+  detectedAt: string;
+  threshold?: number;
+  actualValue?: number;
+}
+
+export interface BillingAlert {
+  id: string;
+  type: 'cost' | 'usage' | 'anomaly';
+  severity: 'info' | 'warning' | 'error';
+  title: string;
+  message: string;
+  subscriptionId: string;
+  affectedKeys: string[];
+  createdAt: string;
+  acknowledged: boolean;
+}
