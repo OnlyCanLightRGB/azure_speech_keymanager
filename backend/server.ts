@@ -16,6 +16,8 @@ import { AzureCLIService } from './services/AzureCLIService';
 import { EnhancedConfigService } from './services/EnhancedConfigService';
 import { BillingService } from './services/BillingService';
 import { SchedulerService } from './services/SchedulerService';
+import { AutoMigrationService } from './services/AutoMigrationService';
+import { MigrationAlertService } from './services/MigrationAlertService';
 import { createKeyRoutes } from './routes/keys';
 import { createTranslationRoutes } from './routes/translation';
 import { createUploadRoutes } from './routes/upload';
@@ -43,6 +45,8 @@ class Server {
   private enhancedConfigService: EnhancedConfigService;
   private billingService: BillingService;
   private schedulerService: SchedulerService;
+  private autoMigrationService: AutoMigrationService | null = null;
+  private migrationAlertService: MigrationAlertService | null = null;
   private port: number;
 
   constructor() {
@@ -297,7 +301,34 @@ class Server {
 
   private async initializeDatabase(): Promise<void> {
     try {
+      // 首先初始化数据库连接
       await this.database.initialize();
+      
+      // 初始化报警服务
+      this.migrationAlertService = new MigrationAlertService({
+        console: { enabled: true, colors: true },
+        logFile: { 
+          enabled: true, 
+          path: path.join(__dirname, '../logs/migration-alerts.log') 
+        },
+        webhook: {
+          enabled: process.env.MIGRATION_WEBHOOK_URL ? true : false,
+          url: process.env.MIGRATION_WEBHOOK_URL || '',
+          headers: {
+            'Authorization': process.env.MIGRATION_WEBHOOK_TOKEN || ''
+          }
+        }
+      });
+
+      // 初始化自动迁移服务（数据库连接已建立后）
+      this.autoMigrationService = new AutoMigrationService(
+        this.database.getPool()
+      );
+      
+      // 执行自动迁移检查
+      logger.info('Starting automatic migration check...');
+      await this.autoMigrationService.executeAutoMigration();
+      
       logger.info('Database initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize database:', error);

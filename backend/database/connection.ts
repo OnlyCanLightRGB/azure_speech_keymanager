@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { DatabaseConfig } from '../types';
 import logger from '../utils/logger';
+import { MigrationManager } from './MigrationManager';
 
 class DatabaseConnection {
   private pool: mysql.Pool | null = null;
@@ -40,6 +41,27 @@ class DatabaseConnection {
   }
 
   private async initializeTables(): Promise<void> {
+    try {
+      logger.info('Initializing database with migration system...');
+      
+      // 使用增强的迁移系统初始化数据库（支持MySQL 5.7兼容性检测）
+      const migrationManager = new MigrationManager(this.pool!);
+      await migrationManager.runMigrationsWithCompatibilityCheck();
+      
+      logger.info('Database initialization completed successfully');
+    } catch (error) {
+      logger.error('Error initializing database:', error);
+      
+      // 如果迁移失败，回退到传统初始化方式
+      logger.info('Falling back to legacy initialization...');
+      await this.legacyInitializeTables();
+    }
+  }
+
+  /**
+   * 传统的数据库初始化方式（作为备用）
+   */
+  private async legacyInitializeTables(): Promise<void> {
     if (!this.pool) {
       throw new Error('Database pool not initialized');
     }
@@ -56,6 +78,9 @@ class DatabaseConnection {
         last_used TIMESTAMP NULL,
         usage_count INT DEFAULT 0,
         error_count INT DEFAULT 0,
+        last_error TEXT,
+        last_error_time TIMESTAMP NULL,
+        protection_end_time TIMESTAMP NULL,
         INDEX idx_status_region (status, region),
         INDEX idx_region (region),
         INDEX idx_status (status)
@@ -72,6 +97,9 @@ class DatabaseConnection {
         last_used TIMESTAMP NULL,
         usage_count INT DEFAULT 0,
         error_count INT DEFAULT 0,
+        last_error TEXT,
+        last_error_time TIMESTAMP NULL,
+        protection_end_time TIMESTAMP NULL,
         INDEX idx_status_region (status, region),
         INDEX idx_region (region),
         INDEX idx_status (status)
@@ -127,7 +155,7 @@ class DatabaseConnection {
       // Insert default configuration
       await this.insertDefaultConfig();
       
-      logger.info('Database tables initialized successfully');
+      logger.info('Database tables initialized successfully (legacy mode)');
     } catch (error) {
       logger.error('Failed to initialize database tables:', error);
       throw error;
