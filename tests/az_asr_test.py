@@ -90,8 +90,8 @@ class AzureKeyManager:
             except Exception as e:
                 print(f"定期更新密钥异常: {e}")
 
-            # 等待0.5秒
-            time.sleep(0.5)
+            # 等待5秒 - 平衡密钥轮换和冷却恢复
+            time.sleep(5)
 
     @classmethod
     def get_azure_key_with_retry(cls, region='eastasia', max_retries=3):
@@ -149,14 +149,14 @@ ASR_SAMPLE_RATE = "44100"  # 采样率
 
 # 测试参数
 TARGET_RPM = 1000  # 目标每分钟请求数
-TEST_DURATION_MINUTES = 2  # 测试持续时间（分钟）
+TEST_DURATION_MINUTES = 1  # 测试持续时间（分钟）
 # 保留旧参数以便向后兼容
 TEST_DURATION_SECONDS = None  # 测试持续时间（秒）
 TOTAL_REQUESTS = None  # 如果设置，将覆盖持续时间
 MAX_WORKERS = 10  # 最大并发线程数（仅用于兼容，新框架不使用）
 
 # 输出目录
-CSV_OUTPUT_DIR = "test_results"
+CSV_OUTPUT_DIR = "../test_results"  # 保存到项目根目录的test_results文件夹
 os.makedirs(CSV_OUTPUT_DIR, exist_ok=True)  # 确保输出目录存在
 
 # 重试配置
@@ -624,8 +624,8 @@ def run_test(target_api_func, test_name):
         # 对于其他API，使用输出大小的估计
         total_chars = sum(r[4] for r in current_run_results if r[0]) // 4  # 假设平均每个字符4字节
 
-    # 计算每字符的平均延迟（毫秒）
-    avg_latency_per_char = (total_latency * 1000 / total_chars) if total_chars > 0 else 0
+    # 计算平均请求时长（毫秒）
+    avg_request_duration = (total_latency * 1000 / success_count) if success_count > 0 else 0
 
     # 打印结果摘要
     print(f"\n{test_name}的结果摘要:")
@@ -634,7 +634,7 @@ def run_test(target_api_func, test_name):
     print(f"  失败结果数: {error_count}")
     print(f"  成功率: {success_rate:.2f}%")
     print(f"  总识别字符数: {total_chars}")
-    print(f"  平均每字符延迟: {avg_latency_per_char:.2f}毫秒/字符")
+    print(f"  平均请求时长: {avg_request_duration:.2f}毫秒")
     print(f"  实际RPM（基于成功计数）: {actual_rpm:.2f}")
 
     # 保存结果到CSV
@@ -646,7 +646,7 @@ def run_test(target_api_func, test_name):
     headers = [
         "时间戳", "测试名称", "目标RPM", "目标持续时间(秒)", "目标总请求数",
         "最大工作线程数", "实际持续时间(秒)", "记录的总结果数", "成功数",
-        "错误数", "成功率(%)", "总字符数", "平均每字符延迟(毫秒)",
+        "错误数", "成功率(%)", "总字符数", "平均请求时长(毫秒)",
         "实际RPM", "错误样本"
     ]
 
@@ -668,7 +668,7 @@ def run_test(target_api_func, test_name):
         error_count,
         f"{success_rate:.2f}",
         total_chars,
-        f"{avg_latency_per_char:.2f}",
+        f"{avg_request_duration:.2f}",
         f"{actual_rpm:.2f}",
         errors_sample
     ]
@@ -834,8 +834,8 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
         # 对于其他API，使用输出大小的估计
         total_chars = sum(r[4] for r in test_results if r[0]) // 4  # 假设平均每个字符4字节
 
-    # 计算每字符的平均延迟（毫秒）
-    avg_latency_per_char = (total_latency * 1000 / total_chars) if total_chars > 0 else 0
+    # 计算平均请求时长（毫秒）
+    avg_request_duration = (total_latency * 1000 / success_count) if success_count > 0 else 0
     
     # 打印结果摘要
     print(f"\n{test_name}的结果摘要:")
@@ -844,7 +844,7 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
     print(f"  失败结果数: {error_count}")
     print(f"  成功率: {success_rate:.2f}%")
     print(f"  总识别字符数: {total_chars}")
-    print(f"  平均每字符延迟: {avg_latency_per_char:.2f}毫秒/字符")
+    print(f"  平均请求时长: {avg_request_duration:.2f}毫秒")
     print(f"  实际RPM（基于成功计数）: {actual_rpm:.2f}")
     
     # 保存结果到CSV
@@ -855,13 +855,52 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
     headers = [
         "时间戳", "测试名称", "目标RPM", "请求间隔(秒)", "测试持续时间(分钟)",
         "预期请求数", "实际持续时间(秒)", "记录的总结果数", "成功数",
-        "错误数", "成功率(%)", "总字符数", "平均每字符延迟(毫秒)",
+        "错误数", "成功率(%)", "总字符数", "平均请求时长(毫秒)",
         "实际RPM", "错误样本"
     ]
 
-    # 收集错误样本
-    error_messages = list(set(r[5] for r in test_results if not r[0] and r[5]))
-    errors_sample = " | ".join(error_messages[:5])
+    # 收集错误样本（简化版本）
+    error_stats = {}
+    for result in test_results:
+        if not result[0] and result[5]:  # 失败的请求且有错误信息
+            error_msg = result[5]
+            error_stats[error_msg] = error_stats.get(error_msg, 0) + 1
+    
+    # 生成简化的错误摘要
+    if error_stats:
+        # 按错误类型合并统计
+        error_type_counts = {
+            "429错误": 0,
+            "400错误": 0,
+            "超时错误": 0,
+            "连接错误": 0,
+            "其他错误": 0
+        }
+        
+        for error_msg, count in error_stats.items():
+            # 提取错误类型的关键信息并累加计数
+            if "429" in error_msg:
+                error_type_counts["429错误"] += count
+            elif "400" in error_msg:
+                error_type_counts["400错误"] += count
+            elif "timeout" in error_msg.lower() or "超时" in error_msg:
+                error_type_counts["超时错误"] += count
+            elif "connection" in error_msg.lower() or "连接" in error_msg:
+                error_type_counts["连接错误"] += count
+            else:
+                error_type_counts["其他错误"] += count
+        
+        # 生成摘要，只显示有错误的类型
+        error_summary = []
+        for error_type, count in error_type_counts.items():
+            if count > 0:
+                error_summary.append(f"{error_type}:{count}次")
+        
+        errors_sample = " | ".join(error_summary[:5])  # 只保留前5种错误类型
+        
+        print(f"\n错误统计摘要: {errors_sample}")
+    else:
+        errors_sample = "无错误"
 
     # 创建CSV行数据
     summary_row = [
@@ -877,7 +916,7 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
         error_count,
         f"{success_rate:.2f}",
         total_chars,
-        f"{avg_latency_per_char:.2f}",
+        f"{avg_request_duration:.2f}",
         f"{actual_rpm:.2f}",
         errors_sample
     ]

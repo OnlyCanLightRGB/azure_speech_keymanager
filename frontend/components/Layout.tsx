@@ -21,6 +21,7 @@ import {
   Description as LogsIcon,
   Settings as SettingsIcon,
   CloudUpload as UploadIcon,
+  AccountBalance as BillingIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -59,6 +60,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       path: '/upload',
       icon: <UploadIcon />,
       label: 'JSON上传管理',
+    },
+    {
+      path: '/azure-billing',
+      icon: <BillingIcon />,
+      label: 'Azure账单查询',
     },
     {
       path: '/logs',

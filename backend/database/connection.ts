@@ -166,7 +166,7 @@ class DatabaseConnection {
     if (!this.pool) return;
 
     const defaultConfigs = [
-      { key: 'cooldown_seconds', value: '300', description: 'Default cooldown time in seconds' },
+      { key: 'cooldown_seconds', value: '10', description: 'Default cooldown time in seconds' },
       { key: 'disable_codes', value: '401,404', description: 'Status codes that trigger key disable' },
       { key: 'cooldown_codes', value: '429', description: 'Status codes that trigger cooldown' },
       { key: 'max_concurrent_requests', value: '10', description: 'Maximum concurrent requests' }

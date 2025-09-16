@@ -42,8 +42,8 @@ CREATE TABLE IF NOT EXISTS `translation_keys`  (
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `last_used` timestamp NULL DEFAULT NULL,
-  `usage_count` int(11) NULL DEFAULT 0,
-  `error_count` int(11) NULL DEFAULT 0,
+  `usage_count` int(11) NOT NULL DEFAULT 0,
+  `error_count` int(11) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `key`(`key` ASC) USING BTREE,
   INDEX `idx_status_region`(`status` ASC, `region` ASC) USING BTREE,
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS `system_config`  (
 -- ----------------------------
 -- Records of system_config
 -- ----------------------------
-INSERT IGNORE INTO `system_config` VALUES (1, 'cooldown_seconds', '20', 'Default cooldown time in seconds', '2025-06-13 10:36:45');
+INSERT IGNORE INTO `system_config` VALUES (1, 'cooldown_seconds', '10', 'Default cooldown time in seconds', '2025-06-13 10:36:45');
 INSERT IGNORE INTO `system_config` VALUES (2, 'disable_codes', '401,404', 'Status codes that trigger key disable', '2025-06-11 07:20:53');
 INSERT IGNORE INTO `system_config` VALUES (3, 'cooldown_codes', '429', 'Status codes that trigger cooldown', '2025-06-11 07:20:53');
 INSERT IGNORE INTO `system_config` VALUES (4, 'max_concurrent_requests', '10000', 'Maximum concurrent requests', '2025-06-11 11:40:56');

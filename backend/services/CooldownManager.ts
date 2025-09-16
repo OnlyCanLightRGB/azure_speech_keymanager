@@ -62,7 +62,7 @@ export class CooldownManager {
   /**
    * Add a key to cooldown
    */
-  addKeyToCooldown(key: string, cooldownSeconds: number = 300): void {
+  addKeyToCooldown(key: string, cooldownSeconds: number = 10): void {
     const cooldownUntil = Date.now() + (cooldownSeconds * 1000);
     this.cooldownKeys.set(key, cooldownUntil);
     

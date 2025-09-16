@@ -3,16 +3,19 @@ import { AzureKey, KeyStatus, LogAction, KeyLog } from '../types';
 import logger from '../utils/logger';
 import RedisCooldownManager from './RedisCooldownManager';
 import RedisLockService from './RedisLockService';
+import RoundRobinKeyManager from './RoundRobinKeyManager';
 
 export class KeyManager {
   private db: mysql.Pool;
   private cooldownManager: RedisCooldownManager;
   private lockService: RedisLockService;
+  private roundRobinManager: RoundRobinKeyManager;
 
   constructor(database: mysql.Pool) {
     this.db = database;
     this.lockService = new RedisLockService();
     this.cooldownManager = new RedisCooldownManager(this, 'speech');
+    this.roundRobinManager = new RoundRobinKeyManager(database, this.cooldownManager, this.lockService);
     this.cooldownManager.start();
   }
 
@@ -20,6 +23,19 @@ export class KeyManager {
    * Get an available key for the specified region
    */
   async getKey(region: string = 'eastasia', tag: string = ''): Promise<AzureKey | null> {
+    // 检查轮换策略配置
+    const rotationStrategy = await this.getConfigValue('key_rotation_strategy', 'sticky');
+    logger.info(`Key rotation strategy: ${rotationStrategy}`);
+    
+    // 如果配置为轮询策略，使用RoundRobinKeyManager
+    if (rotationStrategy === 'round_robin') {
+      logger.info('Using round-robin key selection strategy');
+      return await this.roundRobinManager.getKeyWithRoundRobin(region, tag);
+    }
+    
+    logger.info('Using sticky key selection strategy');
+    
+    // 默认使用粘性策略
     const lockKey = `getkey:${region}`;
 
     return await this.lockService.withLock(lockKey, async () => {
@@ -28,12 +44,13 @@ export class KeyManager {
       try {
         await connection.beginTransaction();
 
-        // Find available keys
+        // Find available keys with sequential rotation strategy
+        // Priority: 1. Not in cooldown 2. Sequential ID order for proper rotation
         const [rows] = await connection.execute<mysql.RowDataPacket[]>(
           `SELECT * FROM azure_keys
            WHERE status = ? AND region = ?
-           ORDER BY created_at ASC
-           LIMIT 1 FOR UPDATE`,
+           ORDER BY id ASC
+           FOR UPDATE`,
           [KeyStatus.ENABLED, region]
         );
 
@@ -43,32 +60,115 @@ export class KeyManager {
           return null;
         }
 
-        const key = rows[0] as AzureKey;
+        // Implement sticky key selection strategy
+        let selectedKey: AzureKey | null = null;
+        const keys = rows as AzureKey[];
+        
+        // First, check if there's a current active key for this region
+        const currentActiveKey = await this.cooldownManager.getActiveKey(region);
+        
+        if (currentActiveKey) {
+          // Find the current active key in available keys
+          const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
+          
+          if (activeKeyInfo) {
+            // Check if the current active key is still available (not in cooldown)
+            const isInCooldown = await this.cooldownManager.isKeyInCooldown(currentActiveKey);
+            
+            if (!isInCooldown) {
+              // Continue using the current active key
+              selectedKey = activeKeyInfo;
+              logger.info(`Continuing with active key: ${this.maskKey(currentActiveKey)} (usage: ${activeKeyInfo.usage_count}, sticky selection)`);
+            } else {
+              // Current active key is in cooldown, clear it and find a new one
+              await this.cooldownManager.clearActiveKey(region);
+              logger.info(`Active key ${this.maskKey(currentActiveKey)} is in cooldown, switching to next available key`);
+            }
+          } else {
+            // Active key is not in the available keys list, clear it
+            await this.cooldownManager.clearActiveKey(region);
+            logger.info(`Active key ${this.maskKey(currentActiveKey)} not found in available keys, clearing`);
+          }
+        }
+        
+        // If no active key or active key is in cooldown, find the next available key using sequential rotation
+        if (!selectedKey) {
+          // Get current active key ID to determine next key in sequence
+           let currentActiveKeyId = 0;
+           if (currentActiveKey) {
+             const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
+             if (activeKeyInfo && activeKeyInfo.id) {
+               currentActiveKeyId = activeKeyInfo.id;
+             }
+           }
+          
+          // First, try to find the next key in sequence (higher ID) that's not in cooldown
+           let foundNextKey = false;
+           for (const key of keys) {
+             if (key.id && key.id > currentActiveKeyId) {
+               const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+               if (!isInCooldown) {
+                 selectedKey = key;
+                 await this.cooldownManager.setActiveKey(region, key.key);
+                 logger.info(`Selected next sequential key: ${this.maskKey(key.key)} (ID: ${key.id}, sequential rotation)`);
+                 foundNextKey = true;
+                 break;
+               } else {
+                 logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id}) - in cooldown`);
+               }
+             }
+           }
+          
+          // If no higher ID key is available, wrap around to the beginning (but skip recently cooled keys)
+          if (!foundNextKey) {
+            for (const key of keys) {
+              const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+              if (!isInCooldown) {
+                // Only use this key if it's not the one that just went into cooldown
+                if (!currentActiveKey || key.key !== currentActiveKey) {
+                  selectedKey = key;
+                  await this.cooldownManager.setActiveKey(region, key.key);
+                  logger.info(`Selected wrapped-around key: ${this.maskKey(key.key)} (ID: ${key.id || 'unknown'}, wrap-around rotation)`);
+                   break;
+                 }
+               } else {
+                 logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id || 'unknown'}) - in cooldown`);
+               }
+            }
+          }
+          
+          // Final fallback: if all keys are in cooldown except the recently cooled one
+          if (!selectedKey && currentActiveKey) {
+            const fallbackKey = keys.find(k => k.key === currentActiveKey);
+            if (fallbackKey && !(await this.cooldownManager.isKeyInCooldown(fallbackKey.key))) {
+              selectedKey = fallbackKey;
+              await this.cooldownManager.setActiveKey(region, fallbackKey.key);
+              logger.info(`Using recently cooled key as final fallback: ${this.maskKey(fallbackKey.key)} (ID: ${fallbackKey.id || 'unknown'}, no other keys available)`);
+            }
+          }
+        }
 
-        // Check if key is in cooldown (double check)
-        if (await this.cooldownManager.isKeyInCooldown(key.key)) {
+        if (!selectedKey) {
           await connection.rollback();
-          logger.warn(`Key ${this.maskKey(key.key)} is in cooldown, skipping`);
+          logger.warn(`All available keys for region ${region} are in cooldown`);
           return null;
         }
 
-
-
-        // Update usage statistics
+        // Update usage statistics for selected key
         await connection.execute(
           `UPDATE azure_keys
            SET usage_count = usage_count + 1, last_used = NOW()
            WHERE id = ?`,
-          [key.id]
+          [selectedKey.id]
         );
 
         // Log the action
-        await this.logAction(connection, key.id!, LogAction.GET_KEY, 200, `Retrieved for region: ${region}, tag: ${tag}`);
+        await this.logAction(connection, selectedKey.id!, LogAction.GET_KEY, 200, `Retrieved for region: ${region}, tag: ${tag}`);
 
         await connection.commit();
 
-        logger.info(`Key retrieved: ${this.maskKey(key.key)} for region: ${region}`);
-        return key;
+        logger.info(`Key retrieved: ${this.maskKey(selectedKey.key)} for region: ${region} (usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+        return selectedKey;
 
       } catch (error) {
         await connection.rollback();
@@ -131,11 +231,14 @@ export class KeyManager {
             message = `Key disabled due to error code: ${code}`;
 
             await connection.execute(
-              'UPDATE azure_keys SET status = ?, error_count = error_count + 1 WHERE `key` = ?',
-              [newStatus, key]
-            );
+                'UPDATE azure_keys SET status = ?, error_count = error_count + 1 WHERE `key` = ?',
+                [newStatus, key]
+              );
 
-            logger.warn(`Key ${this.maskKey(key)} disabled due to error code: ${code}`);
+              // Clear active key status for this key's region when disabled
+              await this.clearActiveKeyForKey(key);
+
+              logger.warn(`Key ${this.maskKey(key)} disabled due to error code: ${code}`);
           } else {
             // Key is already disabled, skip logging
             action = 'skip';
@@ -175,6 +278,9 @@ export class KeyManager {
 
               // Add to cooldown manager (without double-checking protection period)
               await this.cooldownManager.addKeyToCooldownDirect(key, cooldownSeconds);
+
+              // Clear active key status for this key's region to force switching to next available key
+              await this.clearActiveKeyForKey(key);
 
               logger.warn(`Key ${this.maskKey(key)} put in cooldown due to code: ${code} for ${cooldownSeconds} seconds`);
             } else {
@@ -598,6 +704,27 @@ export class KeyManager {
       return key;
     }
     return key.substring(0, 8) + '...';
+  }
+
+  /**
+   * Clear active key status for a specific key (find its region and clear)
+   */
+  private async clearActiveKeyForKey(key: string): Promise<void> {
+    try {
+      // Get key info to find its region
+      const [rows] = await this.db.execute<mysql.RowDataPacket[]>(
+        'SELECT region FROM azure_keys WHERE `key` = ?',
+        [key]
+      );
+
+      if (rows.length > 0) {
+        const region = rows[0].region;
+        await this.cooldownManager.clearActiveKey(region);
+        logger.info(`Cleared active key status for region ${region} due to key ${this.maskKey(key)} status change`);
+      }
+    } catch (error) {
+      logger.error(`Error clearing active key for key ${this.maskKey(key)}:`, error);
+    }
   }
 
   /**

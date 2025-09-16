@@ -1,10 +1,7 @@
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Azure Translation 服务并发性能测试器 (RPM均匀发射版)
-参考 az_asr_test.py 编写，支持文字翻译和语音翻译测试
-"""
+# ##############################################################################
+# Azure Translation 服务并发性能测试器 (RPM均匀发射版)
+# ##############################################################################
 
 import os
 import json
@@ -154,16 +151,16 @@ TRANSLATION_TEXT = """Hello world, this is a comprehensive test for Azure Transl
 TRANSLATION_FROM = "en"
 TRANSLATION_TO = "zh-Hans"
 
-# 测试配置 - 针对翻译服务的429触发条件优化
-TARGET_RPM = 6000  # 大幅增加每分钟请求数
-TEST_DURATION_MINUTES = 5  # 延长测试时间以累积更多字符
+# 测试配置
+TARGET_RPM = 1000  # 目标每分钟请求数
+TEST_DURATION_MINUTES = 1  # 测试持续时间（分钟）
 # 保留旧参数以便向后兼容
 TEST_DURATION_SECONDS = None  # 测试持续时间（秒）
 TOTAL_REQUESTS = None  # 如果设置，将覆盖持续时间
 MAX_WORKERS = 10  # 最大并发线程数（仅用于兼容，新框架不使用）
 
 # 输出目录
-CSV_OUTPUT_DIR = "test_results"
+CSV_OUTPUT_DIR = "../test_results"  # 保存到项目根目录的test_results文件夹
 os.makedirs(CSV_OUTPUT_DIR, exist_ok=True)  # 确保输出目录存在
 
 # 重试配置
@@ -229,8 +226,7 @@ def test_text_translation_api(thread_id, result_list, proxies=None):
         }
         headers = {
             'Ocp-Apim-Subscription-Key': azure_key,
-            'Ocp-Apim-Subscription-Region': azure_region,
-            'Content-Type': 'application/json',
+            'Accept': 'application/json',
             'X-ClientTraceId': request_id
         }
 
@@ -239,7 +235,7 @@ def test_text_translation_api(thread_id, result_list, proxies=None):
         input_size = len(json.dumps(request_data))
 
         # 发送请求
-        response = requests.post(endpoint, params=params, headers=headers, json=request_data, proxies=proxies, timeout=30)
+        response = requests.post(endpoint, params=params, headers=headers, json=request_data, proxies=proxies, timeout=45)
 
         # 处理不同的HTTP状态码
         status_code = response.status_code
@@ -276,7 +272,9 @@ def test_text_translation_api(thread_id, result_list, proxies=None):
                 error_msg = f"翻译响应格式异常: {json.dumps(result_data)[:200]} (ID: {request_id})"
 
             if not success:
-                translation_key_manager.report_key_status_safe(azure_key, 200, f"Translation format error: {error_msg[:100]}")
+                # 格式错误不应该报告为失败状态，因为这可能是临时的响应格式问题
+                # translation_key_manager.report_key_status_safe(azure_key, 200, f"Translation format error: {error_msg[:100]}")
+                print(f"翻译响应格式异常但不报告状态 (线程 {thread_id}, ID: {request_id}) [{key_abbr}]: {error_msg}")
         else:
             # 其他错误状态码
             error_msg = f"HTTP错误 ({status_code}) (ID: {request_id})"
@@ -463,6 +461,13 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
     active_threads = []
     start_run_time = time.time()
     
+    # 确定任务数量和模式
+    use_duration = False
+    if TOTAL_REQUESTS and TOTAL_REQUESTS > 0:
+        use_duration = False
+    else:
+        use_duration = True
+    
     # 计算请求间隔时间（秒）
     request_interval = 60.0 / TARGET_RPM
     test_duration_seconds = TEST_DURATION_MINUTES * 60
@@ -475,6 +480,9 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
     print(f"\n--- 开始测试: {test_name} (均匀RPM模式) ---")
     print(f"目标RPM: {TARGET_RPM}, 请求间隔: {request_interval:.4f}秒")
     print(f"测试持续时间: {TEST_DURATION_MINUTES}分钟, 预期请求数: {total_requests_expected}")
+    
+    # 翻译测试不需要检查音频文件
+    print("翻译测试使用文本数据，跳过文件检查")
     
     # 定义请求线程函数
     def api_worker(thread_id):
@@ -489,12 +497,11 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
             request_id = f"worker-{thread_id}-error-{uuid.uuid4()}"
             test_results.append((False, 0, None, 0, 0, error_msg, request_id, ""))
     
-    # 定义分发线程函数 - 优化为高并发模式
+    # 定义分发线程函数
     def dispatcher():
-        """在固定间隔发射请求的分发器 - 高并发版本"""
+        """在固定间隔发射请求的分发器"""
         request_id = 0
         next_time = time.time()
-        burst_size = 50  # 每次突发发送的请求数量
         
         while not stop_event.is_set():
             current_time = time.time()
@@ -507,37 +514,39 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
                     stop_event.set()
                 break
             
-            # 如果当前时间已经达到或超过下一个计划时间，发射突发请求
+            # 如果当前时间已经达到或超过下一个计划时间，发射新请求
             if current_time >= next_time:
-                # 发射一批并发请求以增加瞬时负载
-                for i in range(burst_size):
-                    if stop_event.is_set():
-                        break
-                    thread_id = f"Request-{request_id}"
-                    thread = threading.Thread(target=api_worker, args=(thread_id,), name=thread_id)
-                    thread.daemon = True
-                    thread.start()
-                    active_threads.append(thread)
-                    request_id += 1
+                thread_id = f"Request-{request_id}"
+                thread = threading.Thread(target=api_worker, args=(thread_id,), name=thread_id)
+                thread.daemon = True
+                thread.start()
+                active_threads.append(thread)
                 
-                # 计算下一个突发时间（更短的间隔）
-                next_time += max(request_interval * burst_size, 0.5)  # 至少0.5秒间隔
+                # 计算下一个请求时间
+                next_time += request_interval
+                request_id += 1
                 
                 # 修正下一个请求时间，如果有累积延迟
                 if current_time > next_time:
-                    next_time = current_time + 0.1  # 快速恢复
+                    # 如果延迟太大，跳过部分请求以赶上
+                    skips = int((current_time - next_time) / request_interval)
+                    if skips > 0:
+                        print(f"警告: 系统延迟，跳过 {skips} 个请求以保持RPM")
+                        next_time += skips * request_interval
+                        request_id += skips
             
             # 打印进度
-            if request_id % 50 == 0:
+            if request_id % 10 == 0:
                 completed = request_counter.value
-                active_count = len([t for t in active_threads if t.is_alive()])
-                print(f"\r测试进行中: {elapsed_time:.1f}/{test_duration_seconds:.1f}秒 | 发射请求: {request_id} | 完成请求: {completed} | 活跃线程: {active_count}", end="")
+                print(f"\r测试进行中: {elapsed_time:.1f}/{test_duration_seconds:.1f}秒 | 发射请求: {request_id} | 完成请求: {completed}", end="")
             
             # 移除已完成的线程
             active_threads[:] = [t for t in active_threads if t.is_alive()]
             
-            # 更短的睡眠时间以保持高频率
-            time.sleep(0.01)  # 10毫秒睡眠，保持高响应性
+            # 小睡以减少CPU使用
+            remaining = next_time - time.time()
+            if remaining > 0:
+                time.sleep(min(remaining, 0.1))  # 最多睡眠0.1秒，保持响应性
     
     # 启动分发线程
     dispatch_thread = threading.Thread(target=dispatcher, name="Dispatcher")
@@ -587,10 +596,16 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
     actual_rpm = (success_count / max(actual_duration, 0.001)) * 60
     
     # 计算字符统计
-    total_chars = sum(len(r[7]) for r in test_results if r[0] and r[7])
-    
-    # 计算每字符的平均延迟（毫秒）
-    avg_latency_per_char = (total_latency * 1000 / total_chars) if total_chars > 0 else 0
+    total_chars = 0
+    if target_api_func in [test_text_translation_api, test_speech_translation_api]:
+        # 对于翻译API，提取已翻译的文本字符数
+        total_chars = sum(len(r[7]) for r in test_results if r[0] and r[7])
+    else:
+        # 对于其他API，使用输出大小的估计
+        total_chars = sum(r[4] for r in test_results if r[0]) // 4  # 假设平均每个字符4字节
+
+    # 计算平均请求时长（毫秒）
+    avg_request_duration = (total_latency * 1000 / success_count) if success_count > 0 else 0
     
     # 打印结果摘要
     print(f"\n{test_name}的结果摘要:")
@@ -598,8 +613,8 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
     print(f"  成功结果数: {success_count}")
     print(f"  失败结果数: {error_count}")
     print(f"  成功率: {success_rate:.2f}%")
-    print(f"  总翻译字符数: {total_chars}")
-    print(f"  平均每字符延迟: {avg_latency_per_char:.2f}毫秒/字符")
+    print(f"  总识别字符数: {total_chars}")
+    print(f"  平均请求时长: {avg_request_duration:.2f}毫秒")
     print(f"  实际RPM（基于成功计数）: {actual_rpm:.2f}")
     
     # 保存结果到CSV
@@ -608,31 +623,44 @@ def run_test_even_rpm(target_api_func, test_name, proxies):
     
     # CSV表头
     headers = [
-        "时间戳", "测试名称", "目标RPM", "请求间隔(秒)", "测试持续时间(分钟)",
-        "预期请求数", "实际持续时间(秒)", "记录的总结果数", "成功数",
-        "错误数", "成功率(%)", "总字符数", "平均每字符延迟(毫秒)",
+        "时间戳", "测试名称", "目标RPM", "目标持续时间(秒)", "目标总请求数",
+        "最大工作线程数", "实际持续时间(秒)", "记录的总结果数", "成功数",
+        "错误数", "成功率(%)", "总字符数", "平均请求时长(毫秒)",
         "实际RPM", "错误样本"
     ]
 
     # 收集错误样本
     error_messages = list(set(r[5] for r in test_results if not r[0] and r[5]))
     errors_sample = " | ".join(error_messages[:5])
+    
+    # 统计各种错误类型的数量
+    error_stats = {}
+    for result in test_results:
+        if not result[0] and result[5]:  # 失败的请求且有错误信息
+            error_msg = result[5]
+            error_stats[error_msg] = error_stats.get(error_msg, 0) + 1
+    
+    # 打印详细错误统计
+    if error_stats:
+        print(f"\n详细错误统计:")
+        for error_msg, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {error_msg}: {count}次")
 
     # 创建CSV行数据
     summary_row = [
         timestamp_str,
         test_name,
         TARGET_RPM,
-        f"{request_interval:.4f}",
-        TEST_DURATION_MINUTES,
-        total_requests_expected,
+        test_duration_seconds if use_duration else "N/A",
+        TOTAL_REQUESTS if not use_duration else "N/A",
+        MAX_WORKERS,
         f"{actual_duration:.2f}",
         total_results_recorded,
         success_count,
         error_count,
         f"{success_rate:.2f}",
         total_chars,
-        f"{avg_latency_per_char:.2f}",
+        f"{avg_request_duration:.2f}",
         f"{actual_rpm:.2f}",
         errors_sample
     ]
@@ -663,50 +691,29 @@ if __name__ == "__main__":
         "https": http_proxy
     }
 
-    # 检查语音翻译所需的音频文件
-    speech_file_ok = False
-    # 这里可以添加音频文件路径，如果需要语音翻译测试
-    # SPEECH_AUDIO_FILE = "test_audio.wav"
-    # audio_paths = [SPEECH_AUDIO_FILE, f"tests/{SPEECH_AUDIO_FILE}"]
-    # for audio_path in audio_paths:
-    #     if os.path.exists(audio_path) and os.path.isfile(audio_path):
-    #         speech_file_ok = True
-    #         SPEECH_AUDIO_FILE = audio_path
-    #         print(f"语音翻译音频文件检查正常：{SPEECH_AUDIO_FILE}")
-    #         break
-    
-    # 暂时跳过音频文件检查，因为语音翻译使用内置音频数据
-    speech_file_ok = True
-    print("语音翻译使用内置音频数据，跳过文件检查")
+    # 跳过音频文件检查（翻译测试不需要音频文件）
+    print("跳过音频文件检查：翻译测试使用文本数据")
 
     # 测试Translation Key Manager API连接
     try:
         result = translation_key_manager.get_key('eastasia')
         if result.get('success'):
-            print("Translation Key Manager API连接正常")
-            key_info = result.get('data', {})
-            print(f"当前可用翻译key: {key_info.get('keyname', 'Unknown')} (区域: {key_info.get('region', 'Unknown')})")
+            print("Key Manager API连接正常")
         else:
-            print(f"Translation Key Manager API连接失败: {result.get('message', '未知错误')}")
-            print("请确保服务器正在运行: npm run dev:backend")
-            print("或检查翻译key是否已启用")
-            exit(1)
+            print(f"Key Manager API连接失败: {result.get('error', '未知错误')}")
+            print("请确保Key Manager服务正在运行在 http://localhost:3019")
     except Exception as e:
-        print(f"Translation Key Manager API连接异常: {e}")
-        print("请确保服务器正在运行在 http://localhost:3019")
-        exit(1)
+        print(f"Key Manager API连接异常: {e}")
+        print("请确保Key Manager服务正在运行在 http://localhost:3019")
 
     # 开始测试
-    if speech_file_ok:
-        print("\n开始文字翻译测试...")
-        run_test_even_rpm(test_text_translation_api, "TextTranslation", proxies)
-        print("\n文字翻译测试完成。等待5秒后开始语音翻译测试...")
-        time.sleep(5)
+    print("\n开始文字翻译测试...")
+    run_test_even_rpm(test_text_translation_api, "TextTranslation", proxies)
+    print("\n文字翻译测试完成。等待5秒后开始语音翻译测试...")
+    time.sleep(5)
 
-        print("\n开始语音翻译测试...")
-        run_test_even_rpm(test_speech_translation_api, "SpeechTranslation", proxies)
-        print("\n语音翻译测试完成。")
-    else:
-        print("\n跳过翻译测试：音频文件不可用")
+    print("\n开始语音翻译测试...")
+    run_test_even_rpm(test_speech_translation_api, "SpeechTranslation", proxies)
+    print("\n语音翻译测试完成。")
 
     print("\n所有测试已完成。")

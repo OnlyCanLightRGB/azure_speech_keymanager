@@ -3,28 +3,24 @@ import { TranslationKey, KeyStatus, LogAction, KeyLog } from '../types';
 import logger from '../utils/logger';
 import RedisCooldownManager from './RedisCooldownManager';
 import RedisLockService from './RedisLockService';
-import RedisConcurrencyManager from './RedisConcurrencyManager';
 
 export class TranslationKeyManager {
   private db: mysql.Pool;
   private cooldownManager: RedisCooldownManager;
   private lockService: RedisLockService;
-  private concurrencyManager: RedisConcurrencyManager;
 
   constructor(database: mysql.Pool) {
     this.db = database;
     this.lockService = new RedisLockService();
     this.cooldownManager = new RedisCooldownManager(this, 'translation');
-    this.concurrencyManager = new RedisConcurrencyManager();
     this.cooldownManager.start();
-    this.concurrencyManager.start();
   }
 
   /**
-   * Get an available translation key for the specified region
+   * Get an available key for the specified region
    */
-  async getKey(region: string = 'global', tag: string = '', maxConcurrentRequests: number = 10): Promise<TranslationKey | null> {
-    const lockKey = `get_translation_key:${region}`;
+  async getKey(region: string = 'eastasia', tag: string = ''): Promise<TranslationKey | null> {
+    const lockKey = `getkey:${region}`;
 
     return await this.lockService.withLock(lockKey, async () => {
       const connection = await this.db.getConnection();
@@ -32,71 +28,155 @@ export class TranslationKeyManager {
       try {
         await connection.beginTransaction();
 
-        // Find available translation keys
+        // Find available keys with sequential rotation strategy
+        // Priority: 1. Not in cooldown 2. Sequential ID order for proper rotation
         const [rows] = await connection.execute<mysql.RowDataPacket[]>(
           `SELECT * FROM translation_keys
            WHERE status = ? AND region = ?
-           ORDER BY created_at ASC
-           LIMIT 1 FOR UPDATE`,
+           ORDER BY id ASC
+           FOR UPDATE`,
           [KeyStatus.ENABLED, region]
         );
 
         if (rows.length === 0) {
           await connection.rollback();
-          logger.warn(`No available translation keys found for region: ${region}`);
+          logger.warn(`No available keys found for region: ${region}`);
           return null;
         }
 
-        const key = rows[0] as TranslationKey;
-
-        // Check if key is in cooldown (double check)
-        if (await this.cooldownManager.isKeyInCooldown(key.key)) {
-          await connection.rollback();
-          logger.warn(`Translation key ${this.maskKey(key.key)} is in cooldown, skipping`);
-          return null;
-        }
-
-        // Check concurrent request limit
-        if (await this.concurrencyManager.isAtConcurrencyLimit(key.key, maxConcurrentRequests)) {
-          await connection.rollback();
-          const currentConcurrency = await this.concurrencyManager.getCurrentConcurrency(key.key);
-          logger.warn(`Translation key ${this.maskKey(key.key)} reached concurrent limit: ${currentConcurrency}/${maxConcurrentRequests}`);
+        // Implement sticky key selection strategy (same as speech keys)
+        let selectedKey: TranslationKey | null = null;
+        const keys = rows as TranslationKey[];
+        
+        // First, check if there's a current active key for this region
+        const currentActiveKey = await this.cooldownManager.getActiveKey(region);
+        
+        if (currentActiveKey) {
+          // Find the current active key in available keys
+          const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
           
-          // Throw a specific error for 429 status
-          const error = new Error('Too Many Requests - Concurrent limit reached');
-          (error as any).statusCode = 429;
-          (error as any).keyReachedLimit = true;
-          throw error;
+          if (activeKeyInfo) {
+            // Check if the current active key is still available (not in cooldown)
+            const isInCooldown = await this.cooldownManager.isKeyInCooldown(currentActiveKey);
+            
+            if (!isInCooldown) {
+              // Continue using the current active key
+              selectedKey = activeKeyInfo;
+              logger.info(`Continuing with active key: ${this.maskKey(currentActiveKey)} (usage: ${activeKeyInfo.usage_count}, sticky selection)`);
+            } else {
+              // Current active key is in cooldown, clear it and find a new one
+              await this.cooldownManager.clearActiveKey(region);
+              logger.info(`Active key ${this.maskKey(currentActiveKey)} is in cooldown, switching to next available key`);
+            }
+          } else {
+            // Active key is not in the available keys list, clear it
+            await this.cooldownManager.clearActiveKey(region);
+            logger.info(`Active key ${this.maskKey(currentActiveKey)} not found in available keys, clearing`);
+          }
+        }
+        
+        // If no active key or active key is in cooldown, find the next available key using sequential rotation
+        if (!selectedKey) {
+          if (currentActiveKey) {
+            // If there was an active key, use sequential rotation
+            let currentActiveKeyId = 0;
+            const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
+            if (activeKeyInfo && activeKeyInfo.id) {
+              currentActiveKeyId = activeKeyInfo.id;
+            }
+            
+            // First, try to find the next key in sequence (higher ID) that's not in cooldown
+            for (const key of keys) {
+              if (key.id && key.id > currentActiveKeyId) {
+                const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+                if (!isInCooldown) {
+                  selectedKey = key;
+                  await this.cooldownManager.setActiveKey(region, key.key);
+                  logger.info(`Selected next sequential key: ${this.maskKey(key.key)} (ID: ${key.id}, sequential rotation)`);
+                  break;
+                } else {
+                  logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id}) - in cooldown`);
+                }
+              }
+            }
+          } else {
+            // No active key exists, select the first available key to avoid conflicts
+            for (const key of keys) {
+              const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+              if (!isInCooldown) {
+                selectedKey = key;
+                await this.cooldownManager.setActiveKey(region, key.key);
+                logger.info(`Selected first available key: ${this.maskKey(key.key)} (ID: ${key.id}, initial selection)`);
+                break;
+              } else {
+                logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id}) - in cooldown`);
+              }
+            }
+          }
+          
+          // If still no key selected and there was an active key, wrap around to the beginning (but skip recently cooled keys)
+          if (!selectedKey && currentActiveKey) {
+            for (const key of keys) {
+              const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+              if (!isInCooldown) {
+                // Only use this key if it's not the one that just went into cooldown
+                if (!currentActiveKey || key.key !== currentActiveKey) {
+                  selectedKey = key;
+                  await this.cooldownManager.setActiveKey(region, key.key);
+                  logger.info(`Selected wrapped-around key: ${this.maskKey(key.key)} (ID: ${key.id || 'unknown'}, wrap-around rotation)`);
+                   break;
+                 }
+               } else {
+                 logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id || 'unknown'}) - in cooldown`);
+               }
+             }
+           }
+          
+          // Final fallback: if all keys are in cooldown except the recently cooled one
+          if (!selectedKey && currentActiveKey) {
+            const fallbackKey = keys.find(k => k.key === currentActiveKey);
+            if (fallbackKey && !(await this.cooldownManager.isKeyInCooldown(fallbackKey.key))) {
+              selectedKey = fallbackKey;
+              await this.cooldownManager.setActiveKey(region, fallbackKey.key);
+              logger.info(`Using recently cooled key as final fallback: ${this.maskKey(fallbackKey.key)} (ID: ${fallbackKey.id || 'unknown'}, no other keys available)`);
+            }
+          }
         }
 
-        // Update usage statistics
+        if (!selectedKey) {
+          await connection.rollback();
+          logger.warn(`All available keys for region ${region} are in cooldown`);
+          return null;
+        }
+
+        // Update usage statistics for selected key
         await connection.execute(
           `UPDATE translation_keys
            SET usage_count = usage_count + 1, last_used = NOW()
            WHERE id = ?`,
-          [key.id]
+          [selectedKey.id]
         );
 
         // Log the action
-        await this.logAction(connection, key.id!, LogAction.GET_KEY, 200, `Retrieved translation key for region: ${region}, tag: ${tag}`);
+        await this.logAction(connection, selectedKey.id!, LogAction.GET_KEY, 200, `Retrieved for region: ${region}, tag: ${tag}`);
 
         await connection.commit();
 
-        logger.info(`Translation key retrieved: ${this.maskKey(key.key)} for region: ${region}`);
-        return key;
+        logger.info(`Key retrieved: ${this.maskKey(selectedKey.key)} for region: ${region} (usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+        return selectedKey;
 
       } catch (error) {
         await connection.rollback();
-        logger.error('Error getting translation key:', error);
+        logger.error('Error getting key:', error);
         throw error;
       } finally {
         connection.release();
       }
-    }, { ttl: 5000, retryCount: 3 });
+    }, { ttl: 5000, retryCount: 3 }); // 5 second lock timeout, 3 retries
   }
 
   /**
-   * Set translation key status based on response code
+   * Set key status based on response code
    */
   async setKeyStatus(key: string, code: number, note: string = ''): Promise<{
     success: boolean;
@@ -620,9 +700,10 @@ export class TranslationKeyManager {
   /**
    * Get concurrency manager instance
    */
-  getConcurrencyManager(): RedisConcurrencyManager {
-    return this.concurrencyManager;
+  getConcurrencyManager(): RedisCooldownManager {
+    return this.cooldownManager;
   }
+
 
   /**
    * Sync database and Redis cooldown states for translation keys
@@ -666,7 +747,6 @@ export class TranslationKeyManager {
    */
   async cleanup(): Promise<void> {
     await this.cooldownManager.stop();
-    await this.concurrencyManager.stop();
     logger.info('TranslationKeyManager cleanup completed');
   }
 }

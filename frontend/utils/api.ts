@@ -10,8 +10,7 @@ import {
   AddKeyForm,
   TestKeyForm,
   TranslationKey,
-  ResourceKeyCreationResponse,
-  ResourceValidationResponse
+  ResourceKeyCreationResponse
 } from '../types';
 
 // Use relative path if NEXT_PUBLIC_API_URL is not set (for production)
@@ -410,22 +409,7 @@ export const uploadApi = {
     return response.data;
   },
 
-  // 验证资源key
-  validateResources: async (file: File): Promise<ResourceValidationResponse> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const response = await api.post<ResourceValidationResponse>('/api/upload/validate-resources', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    });
-    
-    if (!response.data.success) {
-      throw new Error('Failed to validate resources');
-    }
-    return response.data;
-  },
+
 
   // 获取资源创建模板
   getResourceTemplate: async (type: 'speech' | 'translation' = 'speech'): Promise<any> => {

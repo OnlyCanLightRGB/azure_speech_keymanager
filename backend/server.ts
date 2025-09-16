@@ -24,6 +24,7 @@ import { createUploadRoutes } from './routes/upload';
 import { createConfigRoutes } from './routes/config';
 import { createAzureCLIRoutes } from './routes/azure-cli';
 import { createBillingRoutes } from './routes/billing';
+import billingAzureRouter from './routes/billing-azure';
 import scriptsRouter from './routes/scripts';
 import logger from './utils/logger';
 import { DatabaseConfig, ApiResponse } from './types';
@@ -142,6 +143,7 @@ class Server {
     this.app.use('/api/config', createConfigRoutes(this.database.getPool()));
     this.app.use('/api/azure-cli', createAzureCLIRoutes(this.azureCLIService, this.enhancedConfigService));
     this.app.use('/api/billing', createBillingRoutes(this.billingService, this.schedulerService));
+    this.app.use('/api/billing-azure', billingAzureRouter);
     this.app.use('/api/scripts', scriptsRouter);
 
     // Health check endpoint

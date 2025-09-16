@@ -23,6 +23,10 @@ import {
   IconButton,
   Tooltip,
   TablePagination,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import {
   Settings as SettingsIcon,
@@ -50,7 +54,8 @@ const SettingsPage: React.FC = () => {
     cooldown_seconds: 300,
     disable_codes: '401,404',
     cooldown_codes: '429',
-    max_concurrent_requests: 10
+    max_concurrent_requests: 10,
+    key_rotation_strategy: 'sticky'
   });
 
   const [configFormData, setConfigFormData] = useState({
@@ -83,7 +88,8 @@ const SettingsPage: React.FC = () => {
         cooldown_seconds: parseInt(configMap.cooldown_seconds || '300'),
         disable_codes: configMap.disable_codes || '401,404',
         cooldown_codes: configMap.cooldown_codes || '429',
-        max_concurrent_requests: parseInt(configMap.max_concurrent_requests || '10')
+        max_concurrent_requests: parseInt(configMap.max_concurrent_requests || '10'),
+        key_rotation_strategy: configMap.key_rotation_strategy || 'sticky'
       });
     } catch (error: any) {
       showSnackbar(`Failed to load configurations: ${error.message}`, 'error');
@@ -114,6 +120,11 @@ const SettingsPage: React.FC = () => {
           config_key: 'max_concurrent_requests',
           config_value: quickSettings.max_concurrent_requests.toString(),
           description: 'Maximum concurrent requests'
+        },
+        {
+          config_key: 'key_rotation_strategy',
+          config_value: quickSettings.key_rotation_strategy,
+          description: 'Key rotation strategy: sticky or round_robin'
         }
       ];
 
@@ -227,6 +238,18 @@ const SettingsPage: React.FC = () => {
                   placeholder="默认: 10"
                   fullWidth
                 />
+
+                <FormControl fullWidth>
+                  <InputLabel>密钥轮换策略</InputLabel>
+                  <Select
+                    value={quickSettings.key_rotation_strategy}
+                    label="密钥轮换策略"
+                    onChange={(e) => setQuickSettings(prev => ({ ...prev, key_rotation_strategy: e.target.value }))}
+                  >
+                    <MenuItem value="sticky">粘性策略 (默认)</MenuItem>
+                    <MenuItem value="round_robin">轮询策略</MenuItem>
+                  </Select>
+                </FormControl>
 
                 <Button
                   variant="contained"

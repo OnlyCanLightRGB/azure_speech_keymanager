@@ -10,7 +10,9 @@ export class RedisCooldownManager {
   private keyManager: any; // Will be injected
   private readonly COOLDOWN_PREFIX = 'cooldown:';
   private readonly PROTECTION_PREFIX = 'protection:';
+  private readonly ACTIVE_KEY_PREFIX = 'active:';
   private readonly PROTECTION_PERIOD = 5000; // 5 seconds in milliseconds
+  private readonly ACTIVE_KEY_TTL = 300000; // 5 minutes in milliseconds
   private readonly keyType: string; // 'speech' or 'translation'
 
   constructor(keyManager: any, keyType: string = 'speech') {
@@ -205,6 +207,49 @@ export class RedisCooldownManager {
       logger.debug(`Protection period set for ${this.keyType} key ${this.maskKey(key)}`);
     } catch (error) {
       logger.error(`Error setting protection period for ${this.keyType} key ${this.maskKey(key)}:`, error);
+    }
+  }
+
+  /**
+   * Set the current active key for a region
+   */
+  async setActiveKey(region: string, key: string): Promise<void> {
+    const activeKeyKey = this.ACTIVE_KEY_PREFIX + this.keyType + ':' + region;
+    
+    try {
+      await this.redis.set(activeKeyKey, key, 'PX', this.ACTIVE_KEY_TTL);
+      logger.info(`Active key set for ${this.keyType} region ${region}: ${this.maskKey(key)}`);
+    } catch (error) {
+      logger.error(`Error setting active key for ${this.keyType} region ${region}:`, error);
+    }
+  }
+
+  /**
+   * Get the current active key for a region
+   */
+  async getActiveKey(region: string): Promise<string | null> {
+    const activeKeyKey = this.ACTIVE_KEY_PREFIX + this.keyType + ':' + region;
+    
+    try {
+      const activeKey = await this.redis.get(activeKeyKey);
+      return activeKey;
+    } catch (error) {
+      logger.error(`Error getting active key for ${this.keyType} region ${region}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Clear the active key for a region (when key goes into cooldown)
+   */
+  async clearActiveKey(region: string): Promise<void> {
+    const activeKeyKey = this.ACTIVE_KEY_PREFIX + this.keyType + ':' + region;
+    
+    try {
+      await this.redis.del(activeKeyKey);
+      logger.info(`Active key cleared for ${this.keyType} region ${region}`);
+    } catch (error) {
+      logger.error(`Error clearing active key for ${this.keyType} region ${region}:`, error);
     }
   }
 

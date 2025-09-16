@@ -192,22 +192,52 @@ def get_speech_service_costs(tenant_id, client_id, client_secret, subscription_i
         print(f"查询失败: {response.status_code} - {response.text}")
         return None
 
-def main():
+def load_azure_credentials(credentials_file="azure_credentials.json"):
+    """从JSON文件加载Azure凭据"""
+    try:
+        with open(credentials_file, 'r', encoding='utf-8') as f:
+            azure_credentials = json.load(f)
+        
+        # 验证必需的字段
+        required_fields = ["appId", "password", "tenant"]
+        for field in required_fields:
+            if field not in azure_credentials:
+                raise ValueError(f"缺少必需字段: {field}")
+        
+        print(f"✅ 成功从 {credentials_file} 加载Azure凭据")
+        return azure_credentials
+    
+    except FileNotFoundError:
+        print(f"❌ 未找到凭据文件: {credentials_file}")
+        print("请创建包含以下格式的JSON文件:")
+        print(json.dumps({
+            "appId": "your-app-id",
+            "displayName": "your-app-display-name",
+            "password": "your-app-password",
+            "tenant": "your-tenant-id"
+        }, indent=2))
+        return None
+    
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON文件格式错误: {e}")
+        return None
+    
+    except ValueError as e:
+        print(f"❌ 凭据文件内容错误: {e}")
+        return None
+
+def main(credentials_file="azure_credentials.json"):
     """主函数 - 自动获取订阅并查询Speech服务成本"""
     # 获取并显示当前查询时间
     query_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"📄 查询时间: {query_time}")
     print("=" * 80)
 
-    # Azure应用程序凭据 - 支持直接输入数组格式
-    azure_credentials = {
-
-"appId": "YOUR_APP_ID_HERE",
-"displayName": "azure-cli-example",
-"password": "YOUR_PASSWORD_HERE",
-"tenant": "YOUR_TENANT_ID_HERE"
-
-}
+    # 从外部JSON文件加载Azure凭据
+    azure_credentials = load_azure_credentials(credentials_file)
+    if not azure_credentials:
+        print("❌ 无法加载Azure凭据，程序退出")
+        return
     
     # 解析凭据格式：appId->client_id, tenant->tenant_id, password->client_secret
     credentials = {
@@ -311,4 +341,15 @@ def main():
 
 # 使用示例
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # 支持命令行参数指定凭据文件
+    credentials_file = "azure_credentials.json"
+    if len(sys.argv) > 1:
+        credentials_file = sys.argv[1]
+        print(f"🔧 使用指定的凭据文件: {credentials_file}")
+    else:
+        print(f"🔧 使用默认凭据文件: {credentials_file}")
+        print(f"💡 提示: 可以通过命令行参数指定其他文件，例如: python az.py my_credentials.json")
+    
+    main(credentials_file)

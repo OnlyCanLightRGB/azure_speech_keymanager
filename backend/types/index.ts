@@ -284,31 +284,7 @@ export interface ResourceKeyCreationResult {
   endpoint?: string;
 }
 
-// 资源验证相关类型
-export interface ResourceValidationRequest {
-  type: 'speech' | 'translation';
-  keys: ResourceKeyItem[];
-}
 
-export interface ResourceValidationResponse {
-  success: boolean;
-  data: {
-    total: number;
-    valid: number;
-    invalid: number;
-    results: ResourceValidationResult[];
-  };
-  message: string;
-}
-
-export interface ResourceValidationResult {
-  key: string;
-  valid: boolean;
-  message: string;
-  error?: string;
-  region?: string;
-  endpoint?: string;
-}
 
 // 账单监控相关类型
 export interface BillingMonitoringRequest {
