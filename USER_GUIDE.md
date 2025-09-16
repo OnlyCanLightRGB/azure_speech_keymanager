@@ -187,6 +187,49 @@ curl -X POST http://localhost:3001/api/translation/translate-speech \
 - 系统资源使用
 - 错误率统计
 
+## 项目维护工具
+
+### 1. 自动清理脚本
+
+系统提供自动清理脚本，用于清理临时文件和缓存：
+
+```bash
+# 运行清理脚本
+node scripts/cleanup.js
+```
+
+**清理内容包括**：
+- `logs/` - 系统日志文件
+- `dist/` - 构建产物
+- `frontend/.next/` - Next.js 缓存
+- `tests/__pycache__/` - Python 缓存文件
+- `*.log` - 散落的日志文件
+- `dump.rdb` - Redis 备份文件
+
+### 2. 项目统计功能
+
+清理脚本会自动显示项目统计信息：
+- 文件类型分布和数量
+- 代码行数统计
+- 项目结构分析
+- 配置文件状态检查
+
+### 3. 配置检查
+
+脚本会自动检查以下配置：
+- `.gitignore` 文件完整性
+- `package.json` 脚本配置
+- 环境变量设置
+- 依赖包状态
+
+### 4. 维护建议
+
+清理脚本完成后会提供维护建议：
+- 环境变量检查
+- 文档更新提醒
+- 测试运行建议
+- 性能优化建议
+
 ## 故障排除
 
 ### 常见问题
@@ -197,6 +240,7 @@ curl -X POST http://localhost:3001/api/translation/translate-speech \
    - 验证 Azure 订阅状态
 
 2. **服务无法启动**
+   - 运行清理脚本检查环境状态
    - 检查数据库连接
    - 确认 Redis 服务状态
    - 查看日志文件排查错误
@@ -205,6 +249,11 @@ curl -X POST http://localhost:3001/api/translation/translate-speech \
    - 检查翻译密钥配置
    - 确认支持的语言对
    - 查看 API 调用限制
+
+4. **项目环境问题**
+   - 运行 `node scripts/cleanup.js` 清理临时文件
+   - 检查项目统计信息
+   - 验证配置文件完整性
 
 ### 日志查看
 

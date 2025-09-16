@@ -59,13 +59,20 @@ Azure语音服务密钥管理系统 - 一个全面的基于Web的Azure语音服�
 - 设置默认区域
 - 自定义端点配置
 
+### 项目维护工具
+- **清理脚本**: 自动清理临时文件、缓存和构建产物
+- **项目统计**: 实时统计项目文件类型和数量
+- **配置检查**: 验证.gitignore和package.json配置
+- **环境检查**: 检查开发环境和依赖状态
+
 ## 🛠️ 技术栈
 
 - **后端**: TypeScript, Express.js, Node.js
 - **前端**: Next.js, React, Material UI
 - **数据库**: MySQL 8.0+, Redis
 - **开发工具**: ESLint, TypeScript, Nodemon
-- **部署**: Docker支持
+- **维护工具**: 自动清理脚本, 项目统计工具
+- **部署**: Docker支持, 生产环境脚本
 
 ## 📦 快速开始
 
@@ -132,7 +139,13 @@ CREATE DATABASE azure_speech_keymanager;
 mysql -u root -p azure_speech_keymanager < database/init.sql
 ```
 
-5. **启动服务**
+5. **清理和准备环境**
+```bash
+# 清理临时文件和缓存（可选）
+node scripts/cleanup.js
+```
+
+6. **启动服务**
 ```bash
 # 确保MySQL和Redis服务已启动
 sudo systemctl start mysql redis-server  # Linux
@@ -238,12 +251,36 @@ LOG_LEVEL=info
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
 
+## 🧹 维护和故障排除
+
+### 清理临时文件
+```bash
+# 运行清理脚本
+node scripts/cleanup.js
+
+# 清理内容包括：
+# - logs/ 目录下的日志文件
+# - dist/ 构建产物
+# - frontend/.next/ Next.js缓存
+# - tests/__pycache__/ Python缓存
+# - *.log 日志文件
+# - dump.rdb Redis备份文件
+```
+
+### 项目统计
+清理脚本会自动显示项目统计信息：
+- 文件类型分布
+- 代码行数统计
+- 配置文件检查
+- 环境状态验证
+
 ## 🆘 支持
 
 如有问题和疑问：
 1. 查看 [API文档](./API_QUICK_REFERENCE.md)
-2. 检查应用程序日志
-3. 创建包含详细信息的issue
+2. 运行清理脚本检查环境状态
+3. 检查应用程序日志
+4. 创建包含详细信息的issue
 
 ## 📊 使用统计
 

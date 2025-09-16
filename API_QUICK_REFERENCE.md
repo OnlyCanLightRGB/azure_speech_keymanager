@@ -41,12 +41,31 @@
 | DELETE | `/config/:key` | 删除配置 | - |
 | POST | `/config/batch` | 批量更新配置 | `configs[]` |
 
+## 翻译服务接口
+
+| 方法 | 路径 | 说明 | 主要参数 |
+|------|------|------|----------|
+| GET | `/translation/keys/get` | 获取翻译密钥 | `region` |
+| POST | `/translation/keys/status` | 设置翻译密钥状态 | `key`, `code`, `note` |
+| POST | `/translation/keys` | 添加翻译密钥 | `key`, `region`, `keyname` |
+| GET | `/translation/keys` | 获取所有翻译密钥 | - |
+| POST | `/translation/keys/test` | 测试翻译密钥 | `key`, `region` |
+
+## 上传管理接口
+
+| 方法 | 路径 | 说明 | 主要参数 |
+|------|------|------|----------|
+| POST | `/upload/create-keys` | 批量创建密钥 | `jsonData`, `options` |
+| GET | `/upload/template` | 下载JSON模板 | `type` |
+| POST | `/upload/validate` | 验证JSON格式 | `jsonData` |
+
 ## 系统接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/health` | 健康检查 |
 | GET | `/docs` | API文档 |
+| GET | `/system/cleanup` | 系统清理状态 |
 
 ## 快速使用示例
 
@@ -88,7 +107,52 @@ curl -X POST "http://localhost:3000/api/keys/test2" \
   -d '{"key":"your-key","region":"eastasia"}'
 ```
 
-### 4. 获取系统状态
+### 4. 翻译服务操作
+
+```bash
+# 获取翻译密钥
+curl "http://localhost:3000/api/translation/keys/get?region=eastasia"
+
+# 添加翻译密钥
+curl -X POST "http://localhost:3000/api/translation/keys" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "your-translation-key",
+    "region": "eastasia",
+    "keyname": "Translation Key 1"
+  }'
+
+# 测试翻译密钥
+curl -X POST "http://localhost:3000/api/translation/keys/test" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"your-translation-key","region":"eastasia"}'
+```
+
+### 5. 批量上传管理
+
+```bash
+# 下载JSON模板
+curl "http://localhost:3000/api/upload/template?type=speech" -o template.json
+
+# 批量创建密钥
+curl -X POST "http://localhost:3000/api/upload/create-keys" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonData": {...},
+    "options": {
+      "validateBeforeCreate": true,
+      "enableAfterCreate": true,
+      "overwriteExisting": false
+    }
+  }'
+
+# 验证JSON格式
+curl -X POST "http://localhost:3000/api/upload/validate" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonData": {...}}'
+```
+
+### 6. 获取系统状态
 
 ```bash
 # 健康检查
@@ -99,6 +163,9 @@ curl "http://localhost:3000/api/keys"
 
 # 获取统计信息
 curl "http://localhost:3000/api/keys/stats"
+
+# 系统清理状态
+curl "http://localhost:3000/api/system/cleanup"
 ```
 
 ## 响应格式
