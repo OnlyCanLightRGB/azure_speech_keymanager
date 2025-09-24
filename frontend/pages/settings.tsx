@@ -27,6 +27,8 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import {
   Settings as SettingsIcon,
@@ -56,6 +58,12 @@ const SettingsPage: React.FC = () => {
     cooldown_codes: '429',
     max_concurrent_requests: 10,
     key_rotation_strategy: 'sticky'
+  });
+
+  const [feishuSettings, setFeishuSettings] = useState({
+    feishu_notification_enabled: false,
+    feishu_webhook_url: '',
+    feishu_notification_template: '🚨 Azure密钥401错误警报\n\n密钥ID: {keyId}\n密钥名称: {keyName}\n服务类型: {service}\n错误时间: {timestamp}\n\n该密钥已被自动禁用，请检查密钥状态并及时更换。'
   });
 
   const [configFormData, setConfigFormData] = useState({
@@ -91,10 +99,44 @@ const SettingsPage: React.FC = () => {
         max_concurrent_requests: parseInt(configMap.max_concurrent_requests || '10'),
         key_rotation_strategy: configMap.key_rotation_strategy || 'sticky'
       });
+
+      setFeishuSettings({
+        feishu_notification_enabled: configMap.feishu_notification_enabled === 'true',
+        feishu_webhook_url: configMap.feishu_webhook_url || '',
+        feishu_notification_template: configMap.feishu_notification_template || '🚨 Azure密钥401错误警报\n\n密钥ID: {keyId}\n密钥名称: {keyName}\n服务类型: {service}\n错误时间: {timestamp}\n\n该密钥已被自动禁用，请检查密钥状态并及时更换。'
+      });
     } catch (error: any) {
       showSnackbar(`Failed to load configurations: ${error.message}`, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFeishuSave = async () => {
+    try {
+      const configsToUpdate: SystemConfig[] = [
+        {
+          config_key: 'feishu_notification_enabled',
+          config_value: feishuSettings.feishu_notification_enabled.toString(),
+          description: '是否启用飞书通知功能'
+        },
+        {
+          config_key: 'feishu_webhook_url',
+          config_value: feishuSettings.feishu_webhook_url,
+          description: '飞书机器人Webhook URL'
+        },
+        {
+          config_key: 'feishu_notification_template',
+          config_value: feishuSettings.feishu_notification_template,
+          description: '飞书通知消息模板'
+        }
+      ];
+
+      await configApi.batchUpdateConfigs(configsToUpdate);
+      showSnackbar('飞书通知设置保存成功');
+      loadConfigs();
+    } catch (error: any) {
+      showSnackbar(`保存飞书通知设置失败: ${error.message}`, 'error');
     }
   };
 
@@ -258,6 +300,53 @@ const SettingsPage: React.FC = () => {
                   sx={{ mt: 2 }}
                 >
                   保存设置
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+
+          <Card sx={{ flex: 1, minWidth: '400px' }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>飞书通知设置</Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={feishuSettings.feishu_notification_enabled}
+                      onChange={(e) => setFeishuSettings(prev => ({ ...prev, feishu_notification_enabled: e.target.checked }))}
+                    />
+                  }
+                  label="启用飞书通知"
+                />
+
+                <TextField
+                  label="飞书机器人Webhook URL"
+                  value={feishuSettings.feishu_webhook_url}
+                  onChange={(e) => setFeishuSettings(prev => ({ ...prev, feishu_webhook_url: e.target.value }))}
+                  placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+                  fullWidth
+                  disabled={!feishuSettings.feishu_notification_enabled}
+                />
+
+                <TextField
+                  label="通知消息模板"
+                  value={feishuSettings.feishu_notification_template}
+                  onChange={(e) => setFeishuSettings(prev => ({ ...prev, feishu_notification_template: e.target.value }))}
+                  multiline
+                  rows={6}
+                  fullWidth
+                  disabled={!feishuSettings.feishu_notification_enabled}
+                  helperText="可用变量: {keyId}, {keyName}, {service}, {timestamp}"
+                />
+
+                <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={handleFeishuSave}
+                  sx={{ mt: 2 }}
+                  disabled={!feishuSettings.feishu_notification_enabled}
+                >
+                  保存飞书设置
                 </Button>
               </Box>
             </CardContent>

@@ -68,6 +68,22 @@ export class FeishuNotificationService {
   }
 
   /**
+   * Send 401 key error notification
+   */
+  async send401KeyAlert(keyId: string, keyName?: string, service?: string): Promise<boolean> {
+    const serviceName = service || 'Azure服务';
+    const displayName = keyName || keyId;
+    const message = `🔑 密钥认证失败 (401错误)\n\n` +
+                   `服务: ${serviceName}\n` +
+                   `密钥ID: ${keyId}\n` +
+                   `密钥名称: ${displayName}\n` +
+                   `时间: ${new Date().toLocaleString('zh-CN')}\n\n` +
+                   `请检查密钥是否已过期或被禁用，并及时更新密钥配置。`;
+    
+    return this.sendNotification('🚨 Azure密钥认证失败告警', message);
+  }
+
+  /**
    * Update configuration
    */
   updateConfig(config: Partial<FeishuNotificationConfig>): void {

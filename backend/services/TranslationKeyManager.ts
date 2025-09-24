@@ -3,6 +3,7 @@ import { TranslationKey, KeyStatus, LogAction, KeyLog } from '../types';
 import logger from '../utils/logger';
 import RedisCooldownManager from './RedisCooldownManager';
 import RedisLockService from './RedisLockService';
+import FeishuNotificationService from './FeishuNotificationService';
 
 export class TranslationKeyManager {
   private db: mysql.Pool;
@@ -10,6 +11,7 @@ export class TranslationKeyManager {
   private lockService: RedisLockService;
   private redis: any;
   private readonly ROUND_ROBIN_PREFIX = 'translation_round_robin:';
+  private feishuNotificationService: FeishuNotificationService;
 
   constructor(database: mysql.Pool) {
     this.db = database;
@@ -18,6 +20,31 @@ export class TranslationKeyManager {
     // 使用与cooldownManager相同的redis实例
     this.redis = this.cooldownManager['redis'];
     this.cooldownManager.start();
+    
+    // 初始化飞书通知服务，配置将在运行时从数据库读取
+    this.feishuNotificationService = new FeishuNotificationService({
+      enabled: false,
+      webhookUrl: ''
+    });
+    
+    // 异步初始化飞书通知配置
+    this.initFeishuConfig();
+  }
+
+  private async initFeishuConfig(): Promise<void> {
+    try {
+      const enabled = await this.getConfigValue('feishu_notification_enabled', 'false') === 'true';
+      const webhookUrl = await this.getConfigValue('feishu_webhook_url', '');
+      
+      this.feishuNotificationService.updateConfig({
+        enabled,
+        webhookUrl
+      });
+      
+      logger.info(`Translation Feishu notification initialized: enabled=${enabled}, webhookUrl=${webhookUrl ? 'configured' : 'not configured'}`);
+    } catch (error) {
+      logger.error('Failed to initialize Translation Feishu notification config:', error);
+    }
   }
 
   /**
@@ -348,6 +375,27 @@ export class TranslationKeyManager {
             await this.clearActiveKeyForKey(key);
 
             logger.warn(`Translation key ${this.maskKey(key)} disabled due to error code: ${code}`);
+            
+            // 发送401错误的飞书通知
+            if (code === 401) {
+              try {
+                // 获取通知消息模板
+                const template = await this.getConfigValue('feishu_notification_template', 
+                  '🚨 Azure密钥401错误警报\n\n密钥ID: {keyId}\n密钥名称: {keyName}\n服务类型: {service}\n错误时间: {timestamp}\n\n该密钥已被自动禁用，请检查密钥状态并及时更换。'
+                );
+                
+                // 替换模板变量
+                const message = template
+                  .replace('{keyId}', this.maskKey(key))
+                  .replace('{keyName}', keyInfo.keyname || '未命名')
+                  .replace('{service}', 'Azure翻译服务')
+                  .replace('{timestamp}', new Date().toLocaleString('zh-CN'));
+                
+                await this.feishuNotificationService.sendNotification('Azure密钥401错误警报', message);
+              } catch (notificationError) {
+                logger.error('Failed to send Feishu notification for 401 error:', notificationError);
+              }
+            }
           } else {
             action = 'skip';
             message = `Translation key already disabled, skipping disable action for code: ${code}`;
