@@ -1,6 +1,10 @@
 import { BillingService } from './BillingService';
 import { SchedulerService } from './SchedulerService';
-import { FeishuNotificationService } from './FeishuNotificationService';
+// 导入飞书通知服务接口
+interface FeishuNotificationService {
+  isEnabled(): boolean;
+  sendNotification(title: string, content: string): Promise<void>;
+}
 import mysql from 'mysql2/promise';
 import logger from '../utils/logger';
 
@@ -364,14 +368,11 @@ export class AutoBillingService {
           }
         };
         
-        // 直接发送到飞书webhook
-        const axios = require('axios');
-        await axios.post(this.feishuService['webhookUrl'], message, {
-          timeout: 5000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
+        // 使用飞书通知服务发送消息
+        await this.feishuService.sendNotification(
+          '账单异常警报',
+          JSON.stringify(message.content.text, null, 2)
+        );
       }
     } catch (error) {
       logger.error('Failed to send alert notification:', error);
