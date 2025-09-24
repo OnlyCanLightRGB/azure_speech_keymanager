@@ -166,17 +166,18 @@ router.post('/upload-credentials', upload.single('credentials'), async (req, res
         fs.unlinkSync(credentialsPath);
       }
       
+      console.error('Azure账单查询内部错误:', error);
       return res.status(400).json({
         success: false,
-        error: error.message
+        error: error.message || '账单查询失败'
       });
     }
     
   } catch (error: any) {
-      console.error('Azure账单查询错误:', error);
+      console.error('Azure账单查询外部错误:', error);
       return res.status(500).json({
         success: false,
-        error: '服务器内部错误'
+        error: '服务器内部错误: ' + (error.message || '未知错误')
       });
   }
 });

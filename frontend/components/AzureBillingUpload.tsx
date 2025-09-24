@@ -20,7 +20,7 @@ import {
 import {
   CloudUpload,
   CheckCircle,
-  Error,
+  Error as ErrorIcon,
   Info,
   ExpandMore,
   ExpandLess,
@@ -110,6 +110,13 @@ const AzureBillingUpload: React.FC = () => {
         method: 'POST',
         body: formData,
       });
+
+      // 首先检查响应的内容类型
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        throw new Error(`服务器返回非JSON响应: ${text.substring(0, 100)}...`);
+      }
 
       const data = await response.json();
 

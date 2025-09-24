@@ -88,3 +88,11 @@ backend/dist/
 
 # Redis dump
 dump.rdb
+
+# Sensitive files - Azure credentials and keys
+test-key.json
+*-key.json
+*.pem
+*.p12
+*.pfx
+azure_credentials_*.json
