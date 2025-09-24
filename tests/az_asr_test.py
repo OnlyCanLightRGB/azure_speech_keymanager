@@ -90,8 +90,8 @@ class AzureKeyManager:
             except Exception as e:
                 print(f"定期更新密钥异常: {e}")
 
-            # 等待5秒 - 平衡密钥轮换和冷却恢复
-            time.sleep(5)
+            # 等待0.5秒
+            time.sleep(0.5)
 
     @classmethod
     def get_azure_key_with_retry(cls, region='eastasia', max_retries=3):

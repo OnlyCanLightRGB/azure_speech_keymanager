@@ -124,7 +124,7 @@ const SettingsPage: React.FC = () => {
         {
           config_key: 'key_rotation_strategy',
           config_value: quickSettings.key_rotation_strategy,
-          description: 'Key rotation strategy: sticky or round_robin'
+          description: 'Key rotation strategy for both speech and translation keys: sticky or round_robin'
         }
       ];
 
@@ -240,10 +240,10 @@ const SettingsPage: React.FC = () => {
                 />
 
                 <FormControl fullWidth>
-                  <InputLabel>密钥轮换策略</InputLabel>
+                  <InputLabel>密钥轮换策略 (语音+翻译)</InputLabel>
                   <Select
                     value={quickSettings.key_rotation_strategy}
-                    label="密钥轮换策略"
+                    label="密钥轮换策略 (语音+翻译)"
                     onChange={(e) => setQuickSettings(prev => ({ ...prev, key_rotation_strategy: e.target.value }))}
                   >
                     <MenuItem value="sticky">粘性策略 (默认)</MenuItem>

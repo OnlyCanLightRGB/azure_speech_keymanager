@@ -8,11 +8,15 @@ export class TranslationKeyManager {
   private db: mysql.Pool;
   private cooldownManager: RedisCooldownManager;
   private lockService: RedisLockService;
+  private redis: any;
+  private readonly ROUND_ROBIN_PREFIX = 'translation_round_robin:';
 
   constructor(database: mysql.Pool) {
     this.db = database;
     this.lockService = new RedisLockService();
     this.cooldownManager = new RedisCooldownManager(this, 'translation');
+    // 使用与cooldownManager相同的redis实例
+    this.redis = this.cooldownManager['redis'];
     this.cooldownManager.start();
   }
 
@@ -20,6 +24,19 @@ export class TranslationKeyManager {
    * Get an available key for the specified region
    */
   async getKey(region: string = 'eastasia', tag: string = ''): Promise<TranslationKey | null> {
+    // 检查轮换策略配置 - 与语音密钥使用统一的配置项
+    const rotationStrategy = await this.getConfigValue('key_rotation_strategy', 'sticky');
+    logger.info(`Translation key rotation strategy: ${rotationStrategy}`);
+    
+    // 如果配置为轮询策略，使用轮询方法
+    if (rotationStrategy === 'round_robin') {
+      logger.info('Using round-robin translation key selection strategy');
+      return await this.getKeyWithRoundRobin(region, tag);
+    }
+    
+    logger.info('Using sticky translation key selection strategy');
+    
+    // 默认使用粘性策略
     const lockKey = `getkey:${region}`;
 
     return await this.lockService.withLock(lockKey, async () => {
@@ -176,6 +193,103 @@ export class TranslationKeyManager {
   }
 
   /**
+   * 使用轮询调度策略获取翻译密钥
+   */
+  async getKeyWithRoundRobin(region: string = 'eastasia', tag: string = ''): Promise<TranslationKey | null> {
+    const lockKey = `translation_round_robin_getkey:${region}`;
+
+    return await this.lockService.withLock(lockKey, async () => {
+      const connection = await this.db.getConnection();
+
+      try {
+        await connection.beginTransaction();
+
+        // 获取所有可用的翻译密钥
+        const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+          `SELECT * FROM translation_keys
+           WHERE status = ? AND region = ?
+           ORDER BY id ASC
+           FOR UPDATE`,
+          [KeyStatus.ENABLED, region]
+        );
+
+        if (rows.length === 0) {
+          await connection.rollback();
+          logger.warn(`No available translation keys found for region: ${region}`);
+          return null;
+        }
+
+        const keys = rows as TranslationKey[];
+        
+        // 过滤掉冷却中的密钥
+        const availableKeys: TranslationKey[] = [];
+        for (const key of keys) {
+          const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+          if (!isInCooldown) {
+            availableKeys.push(key);
+          }
+        }
+
+        if (availableKeys.length === 0) {
+          await connection.rollback();
+          logger.warn(`All available translation keys for region ${region} are in cooldown`);
+          return null;
+        }
+
+        // 获取当前轮询索引
+        const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}${region}`;
+        let currentIndex = 0;
+        
+        try {
+          const indexStr = await this.redis.get(roundRobinKey);
+          if (indexStr) {
+            currentIndex = parseInt(indexStr, 10) || 0;
+          }
+        } catch (error) {
+          logger.debug(`Error getting round robin index for region ${region}:`, error);
+        }
+
+        // 确保索引在有效范围内
+        currentIndex = currentIndex % availableKeys.length;
+        
+        // 选择当前索引对应的密钥
+        const selectedKey = availableKeys[currentIndex];
+        
+        // 更新轮询索引到下一个位置
+        const nextIndex = (currentIndex + 1) % availableKeys.length;
+        try {
+          await this.redis.set(roundRobinKey, nextIndex.toString(), 'EX', 3600); // 1小时过期
+        } catch (error) {
+          logger.debug(`Error setting round robin index for region ${region}:`, error);
+        }
+
+        // 更新使用统计
+        await connection.execute(
+          `UPDATE translation_keys
+           SET usage_count = usage_count + 1, last_used = NOW()
+           WHERE id = ?`,
+          [selectedKey.id]
+        );
+
+        // Log the action
+        await this.logAction(connection, selectedKey.id!, LogAction.GET_KEY, 200, `Retrieved for region: ${region}, tag: ${tag} (round-robin)`);
+
+        await connection.commit();
+
+        logger.info(`Round-robin translation key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+        return selectedKey;
+
+      } catch (error) {
+        await connection.rollback();
+        logger.error('Error getting translation key with round-robin:', error);
+        throw error;
+      } finally {
+        connection.release();
+      }
+    }, { ttl: 5000, retryCount: 3 });
+  }
+
+  /**
    * Set key status based on response code
    */
   async setKeyStatus(key: string, code: number, note: string = ''): Promise<{
@@ -230,6 +344,9 @@ export class TranslationKeyManager {
               [newStatus, key]
             );
 
+            // Clear active key status for this key's region when disabled
+            await this.clearActiveKeyForKey(key);
+
             logger.warn(`Translation key ${this.maskKey(key)} disabled due to error code: ${code}`);
           } else {
             action = 'skip';
@@ -264,6 +381,9 @@ export class TranslationKeyManager {
 
               // Add to cooldown manager
               await this.cooldownManager.addKeyToCooldownDirect(key, cooldownSeconds);
+
+              // Clear active key status for this key's region to force switching to next available key
+              await this.clearActiveKeyForKey(key);
 
               logger.warn(`Translation key ${this.maskKey(key)} put in cooldown due to code: ${code} for ${cooldownSeconds} seconds`);
             } else {
@@ -688,6 +808,27 @@ export class TranslationKeyManager {
       return key;
     }
     return key.substring(0, 8) + '...';
+  }
+
+  /**
+   * Clear active key status for a specific key's region
+   */
+  private async clearActiveKeyForKey(key: string): Promise<void> {
+    try {
+      // Get key info to find its region
+      const [rows] = await this.db.execute<mysql.RowDataPacket[]>(
+        'SELECT region FROM translation_keys WHERE `key` = ?',
+        [key]
+      );
+
+      if (rows.length > 0) {
+        const region = rows[0].region;
+        await this.cooldownManager.clearActiveKey(region);
+        logger.info(`Cleared active translation key status for region ${region} due to key ${this.maskKey(key)} status change`);
+      }
+    } catch (error) {
+      logger.error(`Error clearing active translation key for key ${this.maskKey(key)}:`, error);
+    }
   }
 
   /**

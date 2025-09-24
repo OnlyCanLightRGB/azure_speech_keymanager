@@ -217,7 +217,7 @@ def test_text_translation_api(thread_id, result_list, proxies=None):
         azure_region = azure_key_info['region']
         key_abbr = get_key_abbreviation(azure_key)
 
-        # 构建请求URL
+        # 构建请求URL - 使用全局端点
         endpoint = "https://api.cognitive.microsofttranslator.com/translate"
         params = {
             'api-version': '3.0',
@@ -226,6 +226,7 @@ def test_text_translation_api(thread_id, result_list, proxies=None):
         }
         headers = {
             'Ocp-Apim-Subscription-Key': azure_key,
+            'Ocp-Apim-Subscription-Region': azure_region,
             'Accept': 'application/json',
             'X-ClientTraceId': request_id
         }
@@ -263,7 +264,8 @@ def test_text_translation_api(thread_id, result_list, proxies=None):
                     translated_text = first_result['translations'][0]['text']
                     success = True
                     print(f"文字翻译成功 (线程 {thread_id}, ID: {request_id}) [{key_abbr}]: '{TRANSLATION_TEXT}' -> '{translated_text}'")
-                    # 成功时不报告状态，减少日志
+                    # 成功时报告状态
+                    translation_key_manager.report_key_status_safe(azure_key, 200, "Translation success")
                 else:
                     success = False
                     error_msg = f"翻译响应格式异常: 未找到translations (ID: {request_id})"
@@ -272,9 +274,9 @@ def test_text_translation_api(thread_id, result_list, proxies=None):
                 error_msg = f"翻译响应格式异常: {json.dumps(result_data)[:200]} (ID: {request_id})"
 
             if not success:
-                # 格式错误不应该报告为失败状态，因为这可能是临时的响应格式问题
-                # translation_key_manager.report_key_status_safe(azure_key, 200, f"Translation format error: {error_msg[:100]}")
-                print(f"翻译响应格式异常但不报告状态 (线程 {thread_id}, ID: {request_id}) [{key_abbr}]: {error_msg}")
+                # 格式错误时也报告状态，参考语音脚本的实现
+                translation_key_manager.report_key_status_safe(azure_key, 200, f"Translation format error: {error_msg[:100]}")
+                print(f"翻译响应格式异常 (线程 {thread_id}, ID: {request_id}) [{key_abbr}]: {error_msg}")
         else:
             # 其他错误状态码
             error_msg = f"HTTP错误 ({status_code}) (ID: {request_id})"
