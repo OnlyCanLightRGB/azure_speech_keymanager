@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -15,7 +15,21 @@ import {
   ListItemText,
   ListItemIcon,
   Collapse,
-  IconButton
+  IconButton,
+  Tabs,
+  Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Pagination
 } from '@mui/material';
 import {
   CloudUpload,
@@ -26,7 +40,10 @@ import {
   ExpandLess,
   AccountBalance,
   Receipt,
-  TrendingUp
+  TrendingUp,
+  History,
+  Refresh,
+  FilterList
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
 
@@ -69,6 +86,41 @@ interface CredentialsExample {
   instructions: string[];
 }
 
+interface JsonBillingHistoryRecord {
+  id: number;
+  fileName: string;
+  filePath: string;
+  appId: string;
+  tenantId: string;
+  displayName: string;
+  queryDate: string;
+  subscriptionId?: string;
+  totalCost?: number;
+  currency?: string;
+  billingData?: any;
+  queryStatus: 'success' | 'failed' | 'no_subscription';
+  errorMessage?: string;
+  lastModified: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface JsonBillingHistoryResponse {
+  success: boolean;
+  data?: {
+    history: JsonBillingHistoryRecord[];
+    totalCount: number;
+    filters: {
+      fileName: string | null;
+      startDate: Date | null;
+      endDate: Date | null;
+      limit: number;
+    };
+  };
+  error?: string;
+  message?: string;
+}
+
 const AzureBillingUpload: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -77,6 +129,20 @@ const AzureBillingUpload: React.FC = () => {
   const [showExample, setShowExample] = useState(false);
   const [example, setExample] = useState<CredentialsExample | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  
+  // 历史记录相关状态
+  const [tabValue, setTabValue] = useState(0);
+  const [historyData, setHistoryData] = useState<JsonBillingHistoryRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(10);
+  
+  // 筛选条件
+  const [filterFileName, setFilterFileName] = useState('');
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
@@ -144,6 +210,87 @@ const AzureBillingUpload: React.FC = () => {
       console.error('获取示例失败:', err);
     }
   };
+
+  // 获取历史记录
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    
+    try {
+      const params = new URLSearchParams();
+      if (filterFileName) params.append('fileName', filterFileName);
+      if (filterStartDate) params.append('startDate', filterStartDate);
+      if (filterEndDate) params.append('endDate', filterEndDate);
+      params.append('limit', (currentPage * pageSize).toString());
+      
+      const response = await fetch(`/api/billing-azure/json-history?${params.toString()}`);
+      const data: JsonBillingHistoryResponse = await response.json();
+      
+      if (response.ok && data.success && data.data) {
+        setHistoryData(data.data.history);
+        setTotalCount(data.data.totalCount);
+      } else {
+        setHistoryError(data.error || data.message || '获取历史记录失败');
+      }
+    } catch (err: any) {
+      setHistoryError('网络错误: ' + err.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  // 处理标签页切换
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
+    if (newValue === 1 && historyData.length === 0) {
+      fetchHistory();
+    }
+  };
+
+  // 处理分页
+  const handlePageChange = (event: React.ChangeEvent<unknown>, page: number) => {
+    setCurrentPage(page);
+  };
+
+  // 重置筛选条件
+  const resetFilters = () => {
+    setFilterFileName('');
+    setFilterStartDate('');
+    setFilterEndDate('');
+    setCurrentPage(1);
+  };
+
+  // 应用筛选条件
+  const applyFilters = () => {
+    setCurrentPage(1);
+    fetchHistory();
+  };
+
+  // 格式化日期字符串
+  const formatDateString = (dateString: string) => {
+    return new Date(dateString).toLocaleString('zh-CN');
+  };
+
+  // 格式化状态
+  const getStatusChip = (status: string) => {
+    switch (status) {
+      case 'success':
+        return <Chip label="成功" color="success" size="small" />;
+      case 'failed':
+        return <Chip label="失败" color="error" size="small" />;
+      case 'no_subscription':
+        return <Chip label="无订阅" color="warning" size="small" />;
+      default:
+        return <Chip label="未知" color="default" size="small" />;
+    }
+  };
+
+  // 当筛选条件或分页改变时重新获取数据
+  useEffect(() => {
+    if (tabValue === 1) {
+      fetchHistory();
+    }
+  }, [currentPage]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('zh-CN', {
@@ -328,7 +475,7 @@ const AzureBillingUpload: React.FC = () => {
   };
 
   return (
-    <Box sx={{ maxWidth: 800, mx: 'auto', p: 3 }}>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
       <Typography variant="h4" gutterBottom align="center">
         Azure 账单查询
       </Typography>
@@ -336,148 +483,330 @@ const AzureBillingUpload: React.FC = () => {
         上传 Azure 应用程序凭据文件，查询相关的账单信息
       </Typography>
 
-      <Card>
-        <CardContent>
-          <Box sx={{ mb: 3 }}>
-            <Button
-              variant="outlined"
-              onClick={fetchExample}
-              sx={{ mb: 2 }}
-            >
-              查看凭据文件格式示例
-            </Button>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs value={tabValue} onChange={handleTabChange} aria-label="billing tabs">
+          <Tab label="账单查询" />
+          <Tab label="历史记录" icon={<History />} iconPosition="start" />
+        </Tabs>
+      </Box>
 
-            <Collapse in={showExample}>
-              {example && (
-                <Alert severity="info" sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    凭据文件格式示例:
-                  </Typography>
-                  <pre style={{ fontSize: '12px', margin: 0 }}>
-                    {JSON.stringify(example.example, null, 2)}
-                  </pre>
-                  <Typography variant="body2" sx={{ mt: 1 }}>
-                    使用说明:
-                  </Typography>
-                  <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
-                    {example.instructions.map((instruction, index) => (
-                      <li key={index} style={{ fontSize: '14px' }}>
-                        {instruction}
-                      </li>
-                    ))}
-                  </ul>
-                </Alert>
-              )}
-            </Collapse>
-          </Box>
+      {/* 账单查询标签页 */}
+      {tabValue === 0 && (
+        <Card>
+          <CardContent>
+            <Box sx={{ mb: 3 }}>
+              <Button
+                variant="outlined"
+                onClick={fetchExample}
+                sx={{ mb: 2 }}
+              >
+                查看凭据文件格式示例
+              </Button>
 
-          <Divider sx={{ my: 2 }} />
-
-          <Box sx={{ mb: 3 }}>
-            <Button
-              component="label"
-              variant="contained"
-              startIcon={<CloudUpload />}
-              sx={{ mb: 2 }}
-            >
-              选择凭据文件
-              <VisuallyHiddenInput
-                type="file"
-                accept=".json,application/json"
-                onChange={handleFileChange}
-              />
-            </Button>
-
-            {file && (
-              <Alert severity="success" sx={{ mb: 2 }}>
-                <Typography variant="body2">
-                  已选择文件: {file.name} ({(file.size / 1024).toFixed(1)} KB)
-                </Typography>
-              </Alert>
-            )}
-          </Box>
-
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={handleUpload}
-            disabled={!file || loading}
-            fullWidth
-            sx={{ mb: 2 }}
-          >
-            {loading ? (
-              <>
-                <CircularProgress size={20} sx={{ mr: 1 }} />
-                查询中...
-              </>
-            ) : (
-              '开始查询账单'
-            )}
-          </Button>
-
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              <Typography variant="body2">{error}</Typography>
-            </Alert>
-          )}
-
-          {result && (
-            <Box>
-              <Alert severity="success" sx={{ mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography variant="body2">
-                    {result.message}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() => setShowDetails(!showDetails)}
-                  >
-                    {showDetails ? <ExpandLess /> : <ExpandMore />}
-                  </IconButton>
-                </Box>
-              </Alert>
-
-              {result.credentials_info && (
-                <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    凭据信息:
-                  </Typography>
-                  <Typography variant="body2">
-                    应用ID: {result.credentials_info.appId}
-                  </Typography>
-                  <Typography variant="body2">
-                    显示名称: {result.credentials_info.displayName}
-                  </Typography>
-                  <Typography variant="body2">
-                    租户ID: {result.credentials_info.tenant}
-                  </Typography>
-                </Paper>
-              )}
-
-              {result.result?.data && renderBillingData(result.result.data)}
-
-              <Collapse in={showDetails}>
-                {result.result?.output && (
-                  <Paper elevation={1} sx={{ p: 2, mt: 2 }}>
+              <Collapse in={showExample}>
+                {example && (
+                  <Alert severity="info" sx={{ mb: 2 }}>
                     <Typography variant="subtitle2" gutterBottom>
-                      详细输出:
+                      凭据文件格式示例:
                     </Typography>
-                    <pre style={{ 
-                      fontSize: '12px', 
-                      whiteSpace: 'pre-wrap', 
-                      maxHeight: '300px', 
-                      overflow: 'auto',
-                      margin: 0
-                    }}>
-                      {result.result.output}
+                    <pre style={{ fontSize: '12px', margin: 0 }}>
+                      {JSON.stringify(example.example, null, 2)}
                     </pre>
-                  </Paper>
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                      使用说明:
+                    </Typography>
+                    <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+                      {example.instructions.map((instruction, index) => (
+                        <li key={index} style={{ fontSize: '14px' }}>
+                          {instruction}
+                        </li>
+                      ))}
+                    </ul>
+                  </Alert>
                 )}
               </Collapse>
             </Box>
-          )}
-        </CardContent>
-      </Card>
+
+            <Divider sx={{ my: 2 }} />
+
+            <Box sx={{ mb: 3 }}>
+              <Button
+                component="label"
+                variant="contained"
+                startIcon={<CloudUpload />}
+                sx={{ mb: 2 }}
+              >
+                选择凭据文件
+                <VisuallyHiddenInput
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleFileChange}
+                />
+              </Button>
+
+              {file && (
+                <Alert severity="success" sx={{ mb: 2 }}>
+                  <Typography variant="body2">
+                    已选择文件: {file.name} ({(file.size / 1024).toFixed(1)} KB)
+                  </Typography>
+                </Alert>
+              )}
+            </Box>
+
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={handleUpload}
+              disabled={!file || loading}
+              fullWidth
+              sx={{ mb: 2 }}
+            >
+              {loading ? (
+                <>
+                  <CircularProgress size={20} sx={{ mr: 1 }} />
+                  查询中...
+                </>
+              ) : (
+                '开始查询账单'
+              )}
+            </Button>
+
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography variant="body2">{error}</Typography>
+              </Alert>
+            )}
+
+            {result && (
+              <Box>
+                <Alert severity="success" sx={{ mb: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Typography variant="body2">
+                      {result.message}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowDetails(!showDetails)}
+                    >
+                      {showDetails ? <ExpandLess /> : <ExpandMore />}
+                    </IconButton>
+                  </Box>
+                </Alert>
+
+                {result.credentials_info && (
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      凭据信息:
+                    </Typography>
+                    <Typography variant="body2">
+                      应用ID: {result.credentials_info.appId}
+                    </Typography>
+                    <Typography variant="body2">
+                      显示名称: {result.credentials_info.displayName}
+                    </Typography>
+                    <Typography variant="body2">
+                      租户ID: {result.credentials_info.tenant}
+                    </Typography>
+                  </Paper>
+                )}
+
+                {result.result?.data && renderBillingData(result.result.data)}
+
+                <Collapse in={showDetails}>
+                  {result.result?.output && (
+                    <Paper elevation={1} sx={{ p: 2, mt: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        详细输出:
+                      </Typography>
+                      <pre style={{ 
+                        fontSize: '12px', 
+                        whiteSpace: 'pre-wrap', 
+                        maxHeight: '300px', 
+                        overflow: 'auto',
+                        margin: 0
+                      }}>
+                        {result.result.output}
+                      </pre>
+                    </Paper>
+                  )}
+                </Collapse>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 历史记录标签页 */}
+      {tabValue === 1 && (
+        <Box>
+          {/* 筛选条件 */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                <FilterList sx={{ mr: 1, verticalAlign: 'middle' }} />
+                筛选条件
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
+                <TextField
+                  label="文件名"
+                  value={filterFileName}
+                  onChange={(e) => setFilterFileName(e.target.value)}
+                  size="small"
+                  sx={{ minWidth: 200 }}
+                />
+                <TextField
+                  label="开始日期"
+                  type="datetime-local"
+                  value={filterStartDate}
+                  onChange={(e) => setFilterStartDate(e.target.value)}
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                />
+                <TextField
+                  label="结束日期"
+                  type="datetime-local"
+                  value={filterEndDate}
+                  onChange={(e) => setFilterEndDate(e.target.value)}
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Box>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  variant="contained"
+                  onClick={applyFilters}
+                  startIcon={<FilterList />}
+                  disabled={historyLoading}
+                >
+                  应用筛选
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={resetFilters}
+                  disabled={historyLoading}
+                >
+                  重置
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={fetchHistory}
+                  startIcon={<Refresh />}
+                  disabled={historyLoading}
+                >
+                  刷新
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+
+          {/* 历史记录表格 */}
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                <History sx={{ mr: 1, verticalAlign: 'middle' }} />
+                JSON文件账单查询历史
+              </Typography>
+
+              {historyError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {historyError}
+                </Alert>
+              )}
+
+              {historyLoading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>文件名</TableCell>
+                          <TableCell>应用ID</TableCell>
+                          <TableCell>显示名称</TableCell>
+                          <TableCell>查询时间</TableCell>
+                          <TableCell>状态</TableCell>
+                          <TableCell>总费用</TableCell>
+                          <TableCell>错误信息</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {historyData.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={7} align="center">
+                              <Typography variant="body2" color="textSecondary">
+                                暂无历史记录
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          historyData.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((record) => (
+                            <TableRow key={record.id}>
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {record.fileName}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {record.appId}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>{record.displayName}</TableCell>
+                              <TableCell>{formatDateString(record.queryDate)}</TableCell>
+                              <TableCell>{getStatusChip(record.queryStatus)}</TableCell>
+                              <TableCell>
+                                {record.totalCost !== null && record.totalCost !== undefined ? (
+                                  <Typography variant="body2" color="primary">
+                                    ${Number(record.totalCost).toFixed(2)} {record.currency}
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="body2" color="textSecondary">
+                                    -
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {record.errorMessage ? (
+                                  <Typography variant="body2" color="error" sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {record.errorMessage}
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="body2" color="textSecondary">
+                                    -
+                                  </Typography>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+
+                  {/* 分页 */}
+                  {totalCount > pageSize && (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                      <Pagination
+                        count={Math.ceil(totalCount / pageSize)}
+                        page={currentPage}
+                        onChange={handlePageChange}
+                        color="primary"
+                      />
+                    </Box>
+                  )}
+
+                  <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
+                    共 {totalCount} 条记录
+                  </Typography>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </Box>
+      )}
     </Box>
   );
 };

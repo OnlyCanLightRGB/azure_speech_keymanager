@@ -7,6 +7,34 @@ interface FeishuNotificationService {
 }
 import mysql from 'mysql2/promise';
 import logger from '../utils/logger';
+import * as fs from 'fs';
+import * as path from 'path';
+
+export interface JsonCredential {
+  appId: string;
+  displayName: string;
+  password: string;
+  tenant: string;
+  filePath?: string;
+  lastModified?: Date;
+}
+
+export interface JsonBillingRecord {
+  id?: number;
+  fileName: string;
+  filePath: string;
+  appId: string;
+  tenantId: string;
+  displayName: string;
+  queryDate: Date;
+  subscriptionId?: string;
+  totalCost?: number;
+  currency?: string;
+  billingData?: string;
+  queryStatus: 'success' | 'failed' | 'no_subscription';
+  errorMessage?: string;
+  lastModified: Date;
+}
 
 export interface BillingSubscription {
   id: number;
@@ -58,6 +86,8 @@ export class AutoBillingService {
   private connection: mysql.Pool;
   private isInitialized = false;
   private scheduledTaskId?: string;
+  private jsonQueryTaskId?: string;
+  private jsonDirectory: string;
 
   constructor(
     billingService: BillingService,
@@ -69,6 +99,7 @@ export class AutoBillingService {
     this.schedulerService = schedulerService;
     this.feishuService = feishuService;
     this.connection = connection;
+    this.jsonDirectory = path.join(process.cwd(), 'json');
   }
 
   /**
@@ -78,11 +109,307 @@ export class AutoBillingService {
     try {
       // 启动定时任务
       await this.startAutoQueryScheduler();
+      // 启动JSON文件查询任务
+      await this.startJsonQueryScheduler();
       this.isInitialized = true;
       logger.info('AutoBillingService initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize AutoBillingService:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 启动JSON文件自动查询调度器
+   */
+  private async startJsonQueryScheduler(): Promise<void> {
+    // 每6小时检查一次JSON文件并查询账单
+    this.jsonQueryTaskId = this.schedulerService.addTask({
+      name: 'JSON Billing Query',
+      interval: 6 * 60 * 60 * 1000, // 6小时
+      enabled: true,
+      task: async () => {
+        await this.checkAndQueryJsonFiles();
+      }
+    });
+
+    logger.info(`JSON billing query scheduler started with task ID: ${this.jsonQueryTaskId}`);
+  }
+
+  /**
+   * 检查并查询JSON文件中的账单信息
+   */
+  private async checkAndQueryJsonFiles(): Promise<void> {
+    try {
+      if (!fs.existsSync(this.jsonDirectory)) {
+        logger.warn(`JSON directory does not exist: ${this.jsonDirectory}`);
+        return;
+      }
+
+      const jsonFiles = fs.readdirSync(this.jsonDirectory)
+        .filter(file => file.endsWith('.json'))
+        .map(file => path.join(this.jsonDirectory, file));
+
+      logger.info(`Found ${jsonFiles.length} JSON files to process`);
+
+      for (const filePath of jsonFiles) {
+        try {
+          await this.processJsonFile(filePath);
+        } catch (error) {
+          logger.error(`Failed to process JSON file ${filePath}:`, error);
+        }
+      }
+    } catch (error) {
+      logger.error('Error in checkAndQueryJsonFiles:', error);
+    }
+  }
+
+  /**
+   * 处理单个JSON文件
+   */
+  private async processJsonFile(filePath: string): Promise<void> {
+    try {
+      const fileName = path.basename(filePath);
+      const stats = fs.statSync(filePath);
+      const lastModified = stats.mtime;
+
+      // 检查是否需要查询（基于文件修改时间和上次查询时间）
+      const shouldQuery = await this.shouldQueryJsonFile(fileName, lastModified);
+      if (!shouldQuery) {
+        logger.debug(`Skipping ${fileName} - already queried recently`);
+        return;
+      }
+
+      // 读取JSON文件
+      const content = fs.readFileSync(filePath, 'utf8');
+      const credential = JSON.parse(content) as any;
+
+      if (!this.isValidCredential(credential)) {
+        logger.warn(`Invalid credential format in ${fileName}`);
+        await this.saveJsonBillingRecord({
+          fileName,
+          filePath,
+          appId: credential?.appId || 'unknown',
+          tenantId: credential?.tenant || 'unknown',
+          displayName: credential?.displayName || 'unknown',
+          queryDate: new Date(),
+          queryStatus: 'failed',
+          errorMessage: 'Invalid credential format',
+          lastModified
+        });
+        return;
+      }
+
+      logger.info(`Processing JSON file: ${fileName} for tenant: ${credential.tenant}`);
+
+      // 尝试获取订阅信息并查询账单
+      await this.queryBillingForCredential(credential, fileName, filePath, lastModified);
+
+    } catch (error) {
+      logger.error(`Error processing JSON file ${filePath}:`, error);
+      const fileName = path.basename(filePath);
+      await this.saveJsonBillingRecord({
+        fileName,
+        filePath,
+        appId: 'unknown',
+        tenantId: 'unknown',
+        displayName: 'unknown',
+        queryDate: new Date(),
+        queryStatus: 'failed',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        lastModified: new Date()
+      });
+    }
+  }
+
+  /**
+   * 验证凭据格式
+   */
+  private isValidCredential(credential: any): credential is JsonCredential {
+    return credential &&
+           typeof credential.appId === 'string' &&
+           typeof credential.displayName === 'string' &&
+           typeof credential.password === 'string' &&
+           typeof credential.tenant === 'string' &&
+           credential.appId.trim() !== '' &&
+           credential.tenant.trim() !== '';
+  }
+
+  /**
+   * 检查是否应该查询JSON文件
+   */
+  private async shouldQueryJsonFile(fileName: string, lastModified: Date): Promise<boolean> {
+    const connection = await this.connection.getConnection();
+    try {
+      const query = `
+        SELECT query_date, last_modified
+        FROM json_billing_history
+        WHERE file_name = ?
+        ORDER BY query_date DESC
+        LIMIT 1
+      `;
+
+      const [rows] = await connection.execute(query, [fileName]);
+      const records = rows as any[];
+
+      if (records.length === 0) {
+        return true; // 从未查询过
+      }
+
+      const lastRecord = records[0];
+      const lastQueryDate = new Date(lastRecord.query_date);
+      const lastRecordModified = new Date(lastRecord.last_modified);
+
+      // 如果文件被修改了，或者距离上次查询超过6小时，则需要重新查询
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+      return lastModified > lastRecordModified || lastQueryDate < sixHoursAgo;
+
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * 为凭据查询账单信息
+   */
+  private async queryBillingForCredential(
+    credential: JsonCredential,
+    fileName: string,
+    filePath: string,
+    lastModified: Date
+  ): Promise<void> {
+    try {
+      // 这里需要使用凭据来获取订阅信息
+      // 由于我们需要先通过Azure CLI或API获取订阅列表，这里先记录基本信息
+      const record: JsonBillingRecord = {
+        fileName,
+        filePath,
+        appId: credential.appId,
+        tenantId: credential.tenant,
+        displayName: credential.displayName,
+        queryDate: new Date(),
+        queryStatus: 'no_subscription',
+        errorMessage: 'Subscription discovery not implemented yet',
+        lastModified
+      };
+
+      // TODO: 实现通过凭据获取订阅列表和账单信息的逻辑
+      // 这需要集成Azure CLI或Azure REST API
+
+      await this.saveJsonBillingRecord(record);
+      logger.info(`Recorded JSON billing query for ${fileName}`);
+
+    } catch (error) {
+      logger.error(`Failed to query billing for credential ${fileName}:`, error);
+      await this.saveJsonBillingRecord({
+        fileName,
+        filePath,
+        appId: credential.appId,
+        tenantId: credential.tenant,
+        displayName: credential.displayName,
+        queryDate: new Date(),
+        queryStatus: 'failed',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        lastModified
+      });
+    }
+  }
+
+  /**
+   * 保存JSON账单查询记录
+   */
+  async saveJsonBillingRecord(record: JsonBillingRecord): Promise<number> {
+    const connection = await this.connection.getConnection();
+    try {
+      const query = `
+        INSERT INTO json_billing_history (
+          file_name, file_path, app_id, tenant_id, display_name,
+          query_date, subscription_id, total_cost, currency,
+          billing_data, query_status, error_message, last_modified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      const values = [
+        record.fileName,
+        record.filePath,
+        record.appId,
+        record.tenantId,
+        record.displayName,
+        record.queryDate,
+        record.subscriptionId || null,
+        record.totalCost || null,
+        record.currency || null,
+        record.billingData || null,
+        record.queryStatus,
+        record.errorMessage || null,
+        record.lastModified
+      ];
+
+      const [result] = await connection.execute(query, values);
+      const insertResult = result as any;
+      return insertResult.insertId;
+
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * 获取JSON文件账单历史记录
+   */
+  async getJsonBillingHistory(
+    fileName?: string,
+    startDate?: Date,
+    endDate?: Date,
+    limit: number = 100
+  ): Promise<JsonBillingRecord[]> {
+    const connection = await this.connection.getConnection();
+    try {
+      let query = `
+        SELECT id, file_name as fileName, file_path as filePath,
+               app_id as appId, tenant_id as tenantId, display_name as displayName,
+               query_date as queryDate, subscription_id as subscriptionId,
+               total_cost as totalCost, currency, billing_data as billingData,
+               query_status as queryStatus, error_message as errorMessage,
+               last_modified as lastModified
+        FROM json_billing_history
+        WHERE 1=1
+      `;
+
+      const params: any[] = [];
+
+      if (fileName) {
+        query += ' AND file_name = ?';
+        params.push(fileName);
+      }
+
+      if (startDate) {
+        query += ' AND query_date >= ?';
+        params.push(startDate);
+      }
+
+      if (endDate) {
+        query += ' AND query_date <= ?';
+        params.push(endDate);
+      }
+
+      query += ' ORDER BY query_date DESC';
+      
+      // 直接在SQL中拼接LIMIT值，避免参数化查询的问题
+      if (limit > 0) {
+        // 确保limit是安全的整数值
+        const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
+        query += ` LIMIT ${safeLimit}`;
+      }
+
+      const [rows] = await connection.execute(query, params);
+      return rows as JsonBillingRecord[];
+
+    } catch (error) {
+      logger.error('Error in getJsonBillingHistory:', error);
+      throw error;
+    } finally {
+      connection.release();
     }
   }
 

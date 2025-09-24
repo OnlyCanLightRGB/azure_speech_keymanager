@@ -18,13 +18,14 @@ import { BillingService } from './services/BillingService';
 import { SchedulerService } from './services/SchedulerService';
 import { AutoMigrationService } from './services/AutoMigrationService';
 import { MigrationAlertService } from './services/MigrationAlertService';
+import { AutoBillingService } from './services/AutoBillingService';
 import { createKeyRoutes } from './routes/keys';
 import { createTranslationRoutes } from './routes/translation';
 import { createUploadRoutes } from './routes/upload';
 import { createConfigRoutes } from './routes/config';
 import { createAzureCLIRoutes } from './routes/azure-cli';
 import { createBillingRoutes } from './routes/billing';
-import billingAzureRouter from './routes/billing-azure';
+import { billingAzureRouter, setAutoBillingService } from './routes/billing-azure';
 import scriptsRouter from './routes/scripts';
 import logger from './utils/logger';
 import { DatabaseConfig, ApiResponse } from './types';
@@ -48,6 +49,7 @@ class Server {
   private schedulerService: SchedulerService;
   private autoMigrationService: AutoMigrationService | null = null;
   private migrationAlertService: MigrationAlertService | null = null;
+  private autoBillingService: AutoBillingService | null = null;
   private port: number;
 
   constructor() {
@@ -376,6 +378,29 @@ class Server {
 
   private async startBillingMonitoring(): Promise<void> {
     try {
+      // Create a mock FeishuNotificationService
+      const mockFeishuService = {
+        isEnabled: () => false,
+        sendNotification: async (title: string, content: string) => {
+          logger.info(`Mock notification: ${title} - ${content}`);
+        }
+      };
+
+      // Initialize AutoBillingService
+      this.autoBillingService = new AutoBillingService(
+        this.billingService,
+        this.schedulerService,
+        mockFeishuService,
+        this.database.getPool()
+      );
+      
+      await this.autoBillingService.initialize();
+      
+      // Set the AutoBillingService instance in billing-azure routes
+      setAutoBillingService(this.autoBillingService);
+      
+      logger.info('AutoBillingService initialized successfully');
+
       // Start the billing monitoring scheduler
       const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID || '';
       if (subscriptionId) {
