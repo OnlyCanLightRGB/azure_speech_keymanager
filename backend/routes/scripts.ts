@@ -16,10 +16,10 @@ router.post('/test-cooldown', async (req, res) => {
     let scriptPath: string;
     
     if (type === 'translation') {
-      scriptPath = path.join(__dirname, '../../scripts/test-translation-cooldown-recovery.js');
+      scriptPath = path.join(__dirname, '../../scripts/test-translation-cooldown-recovery.ts');
     } else {
       // 默认为语音密钥测试
-      scriptPath = path.join(__dirname, '../../scripts/test-cooldown-recovery.js');
+      scriptPath = path.join(__dirname, '../../scripts/test-cooldown-recovery.ts');
     }
     
     // 检查脚本文件是否存在
@@ -111,7 +111,7 @@ router.post('/test-cooldown', async (req, res) => {
  */
 router.post('/cleanup', async (req, res) => {
   try {
-    const scriptPath = path.join(__dirname, '../../scripts/cleanup.js');
+    const scriptPath = path.join(__dirname, '../../scripts/cleanup.ts');
     
     // 检查脚本文件是否存在
     if (!fs.existsSync(scriptPath)) {
@@ -253,9 +253,11 @@ router.get('/list', async (req, res) => {
  */
 function getScriptDescription(filename: string): string {
   switch (filename) {
-    case 'test-cooldown-recovery.js':
+    case 'test-cooldown-recovery.ts':
       return '测试密钥冷却恢复机制';
-    case 'cleanup.js':
+    case 'test-translation-cooldown-recovery.ts':
+      return '测试翻译密钥冷却恢复机制';
+    case 'cleanup.ts':
       return '清理系统数据和缓存';
     default:
       return '未知脚本';

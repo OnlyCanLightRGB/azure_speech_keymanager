@@ -142,7 +142,7 @@ mysql -u root -p azure_speech_keymanager < database/init.sql
 5. **清理和准备环境**
 ```bash
 # 清理临时文件和缓存（可选）
-node scripts/cleanup.js
+node scripts/cleanup.ts
 ```
 
 6. **启动服务**
@@ -256,7 +256,7 @@ LOG_LEVEL=info
 ### 清理临时文件
 ```bash
 # 运行清理脚本
-node scripts/cleanup.js
+node scripts/cleanup.ts
 
 # 清理内容包括：
 # - logs/ 目录下的日志文件

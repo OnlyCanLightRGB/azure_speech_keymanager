@@ -33,7 +33,7 @@ Azure语音密钥管理服务是一个全面的基于Web的Azure语音服务API�
   - `system.ts`: 系统管理API
 
 #### 维护工具 (scripts/)
-- **cleanup.js**: 自动清理脚本
+- **cleanup.ts**: 自动清理脚本
   - 清理临时文件和缓存
   - 项目统计和分析
   - 配置文件检查

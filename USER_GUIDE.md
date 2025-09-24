@@ -195,7 +195,7 @@ curl -X POST http://localhost:3001/api/translation/translate-speech \
 
 ```bash
 # 运行清理脚本
-node scripts/cleanup.js
+node scripts/cleanup.ts
 ```
 
 **清理内容包括**：
@@ -251,7 +251,7 @@ node scripts/cleanup.js
    - 查看 API 调用限制
 
 4. **项目环境问题**
-   - 运行 `node scripts/cleanup.js` 清理临时文件
+   - 运行 `node scripts/cleanup.ts` 清理临时文件
    - 检查项目统计信息
    - 验证配置文件完整性
 

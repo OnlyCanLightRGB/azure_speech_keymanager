@@ -1,9 +1,16 @@
 // 使用Node.js内置的fetch API (Node.js 18+)
 
-async function testFeishuNotification() {
-  const webhookUrl = 'https://open.feishu.cn/open-apis/bot/v2/hook/94a7f77f-dc0d-4439-8ca5-d070c45fa05a';
+interface FeishuPayload {
+  msg_type: string;
+  content: {
+    text: string;
+  };
+}
+
+async function testFeishuNotification(): Promise<boolean> {
+  const webhookUrl: string = 'https://open.feishu.cn/open-apis/bot/v2/hook/94a7f77f-dc0d-4439-8ca5-d070c45fa05a';
   
-  const payload = {
+  const payload: FeishuPayload = {
     msg_type: 'text',
     content: {
       text: '🧪 飞书通知测试\n\n这是一条来自Azure Speech Key Manager的测试通知。\n\n时间: ' + new Date().toLocaleString('zh-CN')
@@ -15,7 +22,7 @@ async function testFeishuNotification() {
     console.log('Webhook URL:', webhookUrl);
     console.log('Payload:', JSON.stringify(payload, null, 2));
     
-    const response = await fetch(webhookUrl, {
+    const response: Response = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -23,7 +30,7 @@ async function testFeishuNotification() {
       body: JSON.stringify(payload)
     });
 
-    const responseText = await response.text();
+    const responseText: string = await response.text();
     
     console.log('Response Status:', response.status);
     console.log('Response Headers:', Object.fromEntries(response.headers.entries()));
@@ -36,13 +43,13 @@ async function testFeishuNotification() {
       console.log('❌ 飞书通知发送失败');
       return false;
     }
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('❌ 发送飞书通知时出错:', error);
     return false;
   }
 }
 
 // 运行测试
-testFeishuNotification().then(success => {
+testFeishuNotification().then((success: boolean) => {
   process.exit(success ? 0 : 1);
 });
