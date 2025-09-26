@@ -145,7 +145,13 @@ class Server {
     this.app.use('/api/config', createConfigRoutes(this.database.getPool()));
     this.app.use('/api/azure-cli', createAzureCLIRoutes(this.azureCLIService, this.enhancedConfigService));
     this.app.use('/api/billing', createBillingRoutes(this.billingService, this.schedulerService));
+    
+    // 添加调试日志
+    console.log('Registering billing-azure router...');
+    console.log('billingAzureRouter:', typeof billingAzureRouter);
     this.app.use('/api/billing-azure', billingAzureRouter);
+    console.log('billing-azure router registered successfully');
+    
     this.app.use('/api/scripts', scriptsRouter);
 
     // Health check endpoint
@@ -428,12 +434,12 @@ class Server {
       await this.initializeKeyManager();
       await this.initializeTranslationKeyManager();
 
+      // Start billing monitoring (before setting up routes)
+      await this.startBillingMonitoring();
+
       // Setup middleware and routes
       this.setupMiddleware();
       this.setupRoutes();
-
-      // Start billing monitoring
-      await this.startBillingMonitoring();
 
       // Start server
       this.app.listen(this.port, '0.0.0.0', () => {

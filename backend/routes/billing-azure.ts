@@ -17,6 +17,102 @@ export function setAutoBillingService(service: AutoBillingService) {
   autoBillingService = service;
 }
 
+// 配置multer用于JSON配置文件上传
+const jsonConfigStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../../json');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // 保持原始文件名，但添加时间戳避免冲突
+    const timestamp = Date.now();
+    const originalName = file.originalname;
+    const nameWithoutExt = path.parse(originalName).name;
+    const ext = path.parse(originalName).ext;
+    cb(null, `${nameWithoutExt}_${timestamp}${ext}`);
+  }
+});
+
+const uploadJsonConfig = multer({ 
+  storage: jsonConfigStorage,
+  fileFilter: (req, file, cb) => {
+    // 只允许JSON文件
+    if (file.mimetype === 'application/json' || file.originalname.endsWith('.json')) {
+      cb(null, true);
+    } else {
+      cb(new Error('只允许上传JSON文件'));
+    }
+  },
+  limits: {
+    fileSize: 1024 * 1024 // 1MB限制
+  }
+});
+
+/**
+ * 上传JSON配置文件
+ */
+router.post('/upload-json-config', uploadJsonConfig.single('jsonFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: '没有上传文件'
+      });
+    }
+
+    const filePath = req.file.path;
+    
+    // 验证JSON文件格式
+    try {
+      const fileContent = fs.readFileSync(filePath, 'utf-8');
+      const jsonData = JSON.parse(fileContent);
+      
+      // 验证必要字段
+      const requiredFields = ['appId', 'tenant', 'displayName', 'password'];
+      const missingFields = requiredFields.filter(field => !jsonData[field]);
+      
+      if (missingFields.length > 0) {
+        // 删除无效文件
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          success: false,
+          error: `JSON文件缺少必要字段: ${missingFields.join(', ')}`
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'JSON配置文件上传成功',
+        filePath: filePath,
+        fileName: req.file.filename,
+        originalName: req.file.originalname,
+        credentials: {
+          appId: jsonData.appId,
+          tenant: jsonData.tenant,
+          displayName: jsonData.displayName
+          // 不返回密码字段以保证安全
+        }
+      });
+    } catch (parseError: any) {
+      // 删除无效文件
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        error: `JSON文件格式错误: ${parseError.message}`
+      });
+    }
+  } catch (error: any) {
+    console.error('上传JSON配置文件时出错:', error);
+    return res.status(500).json({
+      success: false,
+      error: '服务器内部错误: ' + error.message
+    });
+  }
+});
+
 // 配置multer用于文件上传
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -450,5 +546,301 @@ router.get('/json-history', async (req, res) => {
      });
    }
  });
+
+// JSON配置管理API路由
+
+/**
+ * POST /api/billing-azure/json-configs
+ * 保存JSON配置
+ */
+router.post('/json-configs', async (req, res) => {
+  try {
+    if (!autoBillingService) {
+      return res.status(503).json({ 
+        error: 'AutoBillingService not available',
+        message: 'Service is not initialized'
+      });
+    }
+
+    const { configName, fileName, filePath, appId, tenantId, displayName, password, queryIntervalMinutes, autoQueryEnabled } = req.body;
+
+    // 参数验证
+    if (!configName || !fileName || !filePath || !appId || !tenantId || !displayName || !password) {
+      return res.status(400).json({ 
+        error: 'Missing required parameters',
+        message: 'configName, fileName, filePath, appId, tenantId, displayName, and password are required'
+      });
+    }
+
+    if (queryIntervalMinutes && (isNaN(queryIntervalMinutes) || queryIntervalMinutes < 1)) {
+      return res.status(400).json({ 
+        error: 'Invalid queryIntervalMinutes parameter',
+        message: 'queryIntervalMinutes must be a positive number'
+      });
+    }
+
+    const configId = await autoBillingService.saveJsonConfig({
+      configName,
+      fileName,
+      filePath,
+      appId,
+      tenantId,
+      displayName,
+      password,
+      autoQueryEnabled: autoQueryEnabled !== false,
+      queryIntervalMinutes: queryIntervalMinutes || 60,
+      status: 'active',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        configId,
+        message: 'JSON配置保存成功'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error saving JSON config:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to save JSON config'
+    });
+  }
+});
+
+/**
+ * GET /api/billing-azure/json-configs
+ * 获取JSON配置列表
+ */
+router.get('/json-configs', async (req, res) => {
+  console.log('GET /json-configs route hit');
+  console.log('autoBillingService:', autoBillingService ? 'initialized' : 'null');
+  
+  try {
+    if (!autoBillingService) {
+      console.log('AutoBillingService not initialized, returning error');
+      return res.status(503).json({ 
+        error: 'AutoBillingService not available',
+        message: 'Service is not initialized'
+      });
+    }
+
+    const { status } = req.query;
+
+    console.log('Calling autoBillingService.getJsonConfigs()');
+    const configs = await autoBillingService.getJsonConfigs(status as string);
+    console.log('Got configs:', configs.length, 'items');
+
+    return res.json({
+      success: true,
+      data: {
+        configs,
+        totalCount: configs.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching JSON configs:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch JSON configs'
+    });
+  }
+});
+
+/**
+ * PUT /api/billing-azure/json-configs/:id
+ * 更新JSON配置
+ */
+router.put('/json-configs/:id', async (req, res) => {
+  try {
+    if (!autoBillingService) {
+      return res.status(503).json({ 
+        error: 'AutoBillingService not available',
+        message: 'Service is not initialized'
+      });
+    }
+
+    const configId = parseInt(req.params.id);
+    if (isNaN(configId)) {
+      return res.status(400).json({ 
+        error: 'Invalid config ID',
+        message: 'Config ID must be a valid number'
+      });
+    }
+
+    const { configName, fileName, filePath, appId, tenantId, displayName, password, queryIntervalMinutes, autoQueryEnabled, status } = req.body;
+
+    const updateData: Partial<any> = {
+      updatedAt: new Date()
+    };
+
+    if (configName !== undefined) updateData.configName = configName;
+    if (fileName !== undefined) updateData.fileName = fileName;
+    if (filePath !== undefined) updateData.filePath = filePath;
+    if (appId !== undefined) updateData.appId = appId;
+    if (tenantId !== undefined) updateData.tenantId = tenantId;
+    if (displayName !== undefined) updateData.displayName = displayName;
+    if (password !== undefined) updateData.password = password;
+    if (queryIntervalMinutes !== undefined) {
+      if (isNaN(queryIntervalMinutes) || queryIntervalMinutes < 1) {
+        return res.status(400).json({ 
+          error: 'Invalid queryIntervalMinutes parameter',
+          message: 'queryIntervalMinutes must be a positive number'
+        });
+      }
+      updateData.queryIntervalMinutes = queryIntervalMinutes;
+    }
+    if (autoQueryEnabled !== undefined) updateData.autoQueryEnabled = autoQueryEnabled;
+    if (status !== undefined) updateData.status = status;
+
+    await autoBillingService.updateJsonConfig(configId, updateData);
+
+    return res.json({
+      success: true,
+      data: {
+        message: 'JSON配置更新成功'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating JSON config:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to update JSON config'
+    });
+  }
+});
+
+/**
+ * DELETE /api/billing-azure/json-configs/:id
+ * 删除JSON配置
+ */
+router.delete('/json-configs/:id', async (req, res) => {
+  try {
+    if (!autoBillingService) {
+      return res.status(503).json({ 
+        error: 'AutoBillingService not available',
+        message: 'Service is not initialized'
+      });
+    }
+
+    const configId = parseInt(req.params.id);
+    if (isNaN(configId)) {
+      return res.status(400).json({ 
+        error: 'Invalid config ID',
+        message: 'Config ID must be a valid number'
+      });
+    }
+
+    await autoBillingService.deleteJsonConfig(configId);
+
+    return res.json({
+      success: true,
+      data: {
+        message: 'JSON配置删除成功'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error deleting JSON config:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to delete JSON config'
+    });
+  }
+});
+
+/**
+ * POST /api/billing-azure/trigger-json-query
+ * 手动触发所有JSON配置的查询
+ */
+router.post('/trigger-json-query', (req, res, next) => {
+  console.log('POST /trigger-json-query route hit - middleware');
+  next();
+}, async (req, res) => {
+  console.log('POST /trigger-json-query route hit - handler');
+  try {
+    console.log('autoBillingService:', autoBillingService ? 'initialized' : 'not initialized');
+    if (!autoBillingService) {
+      return res.status(503).json({ 
+        error: 'AutoBillingService not available',
+        message: 'Service is not initialized'
+      });
+    }
+
+    console.log('Calling autoBillingService.triggerJsonConfigQueries()');
+    // 手动触发JSON配置查询
+    await autoBillingService.triggerJsonConfigQueries();
+
+    console.log('JSON config queries triggered successfully');
+    return res.json({
+      success: true,
+      data: {
+        message: 'JSON配置查询已手动触发'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error triggering JSON config queries:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to trigger JSON config queries'
+    });
+  }
+});
+
+/**
+ * POST /api/billing-azure/json-configs/:id/execute
+ * 执行JSON配置查询
+ */
+router.post('/json-configs/:id/execute', async (req, res) => {
+  try {
+    if (!autoBillingService) {
+      return res.status(503).json({ 
+        error: 'AutoBillingService not available',
+        message: 'Service is not initialized'
+      });
+    }
+
+    const configId = parseInt(req.params.id);
+    if (isNaN(configId)) {
+      return res.status(400).json({ 
+        error: 'Invalid config ID',
+        message: 'Config ID must be a valid number'
+      });
+    }
+
+    // 获取配置信息
+    const configs = await autoBillingService.getJsonConfigs();
+    const config = configs.find(c => c.id === configId);
+    
+    if (!config) {
+      return res.status(404).json({ 
+        error: 'Config not found',
+        message: 'JSON config with specified ID not found'
+      });
+    }
+
+    await autoBillingService.executeJsonConfigQuery(config);
+
+    return res.json({
+      success: true,
+      data: {
+        message: 'JSON配置查询执行成功'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error executing JSON config query:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to execute JSON config query'
+    });
+  }
+});
 
 export { router as billingAzureRouter };

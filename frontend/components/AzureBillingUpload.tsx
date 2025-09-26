@@ -25,11 +25,17 @@ import {
   TableHead,
   TableRow,
   TextField,
-  FormControl,
-  InputLabel,
-  Select,
+  Pagination,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  FormControlLabel,
+  Switch,
   MenuItem,
-  Pagination
+  Select,
+  FormControl,
+  InputLabel
 } from '@mui/material';
 import {
   CloudUpload,
@@ -43,7 +49,13 @@ import {
   TrendingUp,
   History,
   Refresh,
-  FilterList
+  FilterList,
+  Schedule,
+  Add,
+  Edit,
+  Delete,
+  PlayArrow,
+  Stop
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
 
@@ -121,6 +133,36 @@ interface JsonBillingHistoryResponse {
   message?: string;
 }
 
+// 新增JSON配置相关接口
+interface JsonBillingConfig {
+  id?: number;
+  configName: string;
+  fileName: string;
+  filePath: string;
+  appId: string;
+  tenantId: string;
+  displayName: string;
+  password: string;
+  autoQueryEnabled: boolean;
+  queryIntervalMinutes: number;
+  lastQueryTime?: string;
+  nextQueryTime?: string;
+  status: 'active' | 'inactive' | 'error';
+  errorMessage?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface JsonBillingConfigResponse {
+  success: boolean;
+  data?: {
+    configs: JsonBillingConfig[];
+    totalCount: number;
+  };
+  error?: string;
+  message?: string;
+}
+
 const AzureBillingUpload: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -144,6 +186,28 @@ const AzureBillingUpload: React.FC = () => {
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
 
+  // JSON配置管理相关状态
+  const [jsonConfigs, setJsonConfigs] = useState<JsonBillingConfig[]>([]);
+  const [configsLoading, setConfigsLoading] = useState(false);
+  const [configsError, setConfigsError] = useState<string | null>(null);
+  const [configDialogOpen, setConfigDialogOpen] = useState(false);
+  const [editingConfig, setEditingConfig] = useState<JsonBillingConfig | null>(null);
+  const [configForm, setConfigForm] = useState<Partial<JsonBillingConfig>>({
+    configName: '',
+    fileName: '',
+    filePath: '',
+    appId: '',
+    tenantId: '',
+    displayName: '',
+    password: '',
+    autoQueryEnabled: false,
+    queryIntervalMinutes: 60,
+    status: 'active'
+  });
+
+  // JSON文件上传相关状态
+  const [uploadedFileName, setUploadedFileName] = useState<string>('');
+  const [uploadedFileContent, setUploadedFileContent] = useState<any>(null);
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
     if (selectedFile) {
@@ -245,6 +309,234 @@ const AzureBillingUpload: React.FC = () => {
     if (newValue === 1 && historyData.length === 0) {
       fetchHistory();
     }
+    if (newValue === 2 && jsonConfigs.length === 0) {
+      fetchJsonConfigs();
+    }
+  };
+
+  // JSON配置管理相关函数
+  // JSON文件上传处理函数
+  const handleJsonFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0];
+    if (!selectedFile) return;
+
+    // 重置错误状态
+    setConfigsError(null);
+
+    // 文件类型验证
+    if (!selectedFile.type.includes('json') && !selectedFile.name.endsWith('.json')) {
+      setConfigsError('请选择JSON格式的文件');
+      return;
+    }
+
+    // 文件大小验证 (1MB)
+    if (selectedFile.size > 1024 * 1024) {
+      setConfigsError('文件大小不能超过1MB');
+      return;
+    }
+
+    try {
+      // 读取文件内容
+      const fileContent = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = () => reject(new Error('文件读取失败'));
+        reader.readAsText(selectedFile);
+      });
+
+      // 解析JSON内容
+      let jsonData;
+      try {
+        jsonData = JSON.parse(fileContent);
+      } catch (parseError) {
+        setConfigsError('JSON文件格式错误，请检查文件内容');
+        return;
+      }
+      
+      // 验证必要字段
+      const requiredFields = ['appId', 'tenant', 'displayName', 'password'];
+      const missingFields = requiredFields.filter(field => !jsonData[field] || jsonData[field].toString().trim() === '');
+      
+      if (missingFields.length > 0) {
+        setConfigsError(`JSON文件缺少必要字段：${missingFields.join(', ')}`);
+        return;
+      }
+
+      // 验证字段格式
+      if (typeof jsonData.appId !== 'string' || jsonData.appId.length < 10) {
+        setConfigsError('appId格式不正确，应为有效的应用程序ID');
+        return;
+      }
+
+      if (typeof jsonData.tenant !== 'string' || jsonData.tenant.length < 10) {
+        setConfigsError('tenant格式不正确，应为有效的租户ID');
+        return;
+      }
+
+      // 上传文件到服务器
+      const formData = new FormData();
+      formData.append('jsonFile', selectedFile);
+      
+      const uploadResponse = await fetch('/api/billing-azure/upload-json-config', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const uploadResult = await uploadResponse.json();
+      
+      if (uploadResponse.ok && uploadResult.success) {
+        // 自动填充表单
+        setConfigForm({
+          ...configForm,
+          configName: selectedFile.name.replace('.json', ''),
+          fileName: uploadResult.fileName,
+          filePath: uploadResult.filePath,
+          appId: jsonData.appId,
+          tenantId: jsonData.tenant,
+          displayName: jsonData.displayName,
+          password: jsonData.password,
+        });
+        
+        setUploadedFileName(selectedFile.name);
+        setUploadedFileContent(jsonData);
+        setConfigsError(null);
+      } else {
+        setConfigsError(uploadResult.error || '文件上传失败');
+      }
+    } catch (err: any) {
+      console.error('文件处理失败:', err);
+      setConfigsError('文件处理失败: ' + err.message);
+    }
+  };
+
+  const fetchJsonConfigs = async () => {
+    setConfigsLoading(true);
+    setConfigsError(null);
+    
+    try {
+      const response = await fetch('/api/billing-azure/json-configs');
+      const data: JsonBillingConfigResponse = await response.json();
+      
+      if (response.ok && data.success && data.data) {
+        setJsonConfigs(data.data.configs);
+      } else {
+        setConfigsError(data.error || data.message || '获取JSON配置失败');
+      }
+    } catch (err: any) {
+      setConfigsError('网络错误: ' + err.message);
+    } finally {
+      setConfigsLoading(false);
+    }
+  };
+
+  const saveJsonConfig = async () => {
+    try {
+      const url = editingConfig 
+        ? `/api/billing-azure/json-configs/${editingConfig.id}`
+        : '/api/billing-azure/json-configs';
+      
+      const method = editingConfig ? 'PUT' : 'POST';
+      
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(configForm),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setConfigDialogOpen(false);
+        setEditingConfig(null);
+        resetConfigForm();
+        fetchJsonConfigs();
+      } else {
+        setConfigsError(data.error || data.message || '保存配置失败');
+      }
+    } catch (err: any) {
+      setConfigsError('网络错误: ' + err.message);
+    }
+  };
+
+  const deleteJsonConfig = async (configId: number) => {
+    if (!confirm('确定要删除这个配置吗？')) return;
+    
+    try {
+      const response = await fetch(`/api/billing-azure/json-configs/${configId}`, {
+        method: 'DELETE',
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        fetchJsonConfigs();
+      } else {
+        setConfigsError(data.error || data.message || '删除配置失败');
+      }
+    } catch (err: any) {
+      setConfigsError('网络错误: ' + err.message);
+    }
+  };
+
+  const executeJsonConfig = async (configId: number) => {
+    try {
+      const response = await fetch(`/api/billing-azure/json-configs/${configId}/execute`, {
+        method: 'POST',
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        alert('配置执行成功！');
+        fetchJsonConfigs();
+      } else {
+        setConfigsError(data.error || data.message || '执行配置失败');
+      }
+    } catch (err: any) {
+      setConfigsError('网络错误: ' + err.message);
+    }
+  };
+
+  const openConfigDialog = (config?: JsonBillingConfig) => {
+    if (config) {
+      setEditingConfig(config);
+      setConfigForm({
+        configName: config.configName,
+        fileName: config.fileName,
+        filePath: config.filePath,
+        appId: config.appId,
+        tenantId: config.tenantId,
+        displayName: config.displayName,
+        password: config.password,
+        autoQueryEnabled: config.autoQueryEnabled,
+        queryIntervalMinutes: config.queryIntervalMinutes,
+        status: config.status
+      });
+    } else {
+      setEditingConfig(null);
+      resetConfigForm();
+    }
+    setConfigDialogOpen(true);
+  };
+
+  const resetConfigForm = () => {
+    setConfigForm({
+      configName: '',
+      fileName: '',
+      filePath: '',
+      appId: '',
+      tenantId: '',
+      displayName: '',
+      password: '',
+      autoQueryEnabled: false,
+      queryIntervalMinutes: 60,
+      status: 'active'
+    });
+    // 重置上传状态
+    setUploadedFileName('');
+    setUploadedFileContent(null);
   };
 
   // 处理分页
@@ -271,7 +563,6 @@ const AzureBillingUpload: React.FC = () => {
     return new Date(dateString).toLocaleString('zh-CN');
   };
 
-  // 格式化状态
   const getStatusChip = (status: string) => {
     switch (status) {
       case 'success':
@@ -280,6 +571,12 @@ const AzureBillingUpload: React.FC = () => {
         return <Chip label="失败" color="error" size="small" />;
       case 'no_subscription':
         return <Chip label="无订阅" color="warning" size="small" />;
+      case 'active':
+        return <Chip label="活跃" color="success" size="small" />;
+      case 'inactive':
+        return <Chip label="停用" color="default" size="small" />;
+      case 'error':
+        return <Chip label="错误" color="error" size="small" />;
       default:
         return <Chip label="未知" color="default" size="small" />;
     }
@@ -289,8 +586,16 @@ const AzureBillingUpload: React.FC = () => {
   useEffect(() => {
     if (tabValue === 1) {
       fetchHistory();
+    } else if (tabValue === 2) {
+      fetchJsonConfigs(); // 当切换到JSON配置标签页时加载配置
     }
-  }, [currentPage]);
+  }, [tabValue, filterFileName, filterStartDate, filterEndDate, currentPage, pageSize]);
+
+  // 初始化加载数据
+  useEffect(() => {
+    fetchHistory();
+    fetchJsonConfigs();
+  }, []);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('zh-CN', {
@@ -487,6 +792,7 @@ const AzureBillingUpload: React.FC = () => {
         <Tabs value={tabValue} onChange={handleTabChange} aria-label="billing tabs">
           <Tab label="账单查询" />
           <Tab label="历史记录" icon={<History />} iconPosition="start" />
+          <Tab label="定时配置" icon={<Schedule />} iconPosition="start" />
         </Tabs>
       </Box>
 
@@ -805,6 +1111,296 @@ const AzureBillingUpload: React.FC = () => {
               )}
             </CardContent>
           </Card>
+        </Box>
+      )}
+
+      {/* JSON配置管理标签页 */}
+      {tabValue === 2 && (
+        <Box>
+          {/* 配置管理工具栏 */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6">
+                  <Schedule sx={{ mr: 1, verticalAlign: 'middle' }} />
+                  JSON定时查询配置
+                </Typography>
+                <Button
+                  variant="contained"
+                  startIcon={<Add />}
+                  onClick={() => openConfigDialog()}
+                >
+                  添加配置
+                </Button>
+              </Box>
+              
+              {configsError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {configsError}
+                </Alert>
+              )}
+
+              <Button
+                variant="outlined"
+                onClick={fetchJsonConfigs}
+                startIcon={<Refresh />}
+                disabled={configsLoading}
+                sx={{ mr: 1 }}
+              >
+                刷新
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* 配置列表 */}
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                配置列表
+              </Typography>
+
+              {configsLoading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>配置名称</TableCell>
+                        <TableCell>文件名</TableCell>
+                        <TableCell>显示名称</TableCell>
+                        <TableCell>状态</TableCell>
+                        <TableCell>自动查询</TableCell>
+                        <TableCell>查询间隔</TableCell>
+                        <TableCell>下次查询时间</TableCell>
+                        <TableCell>操作</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {jsonConfigs.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={8} align="center">
+                            <Typography variant="body2" color="textSecondary">
+                              暂无配置
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        jsonConfigs.map((config) => (
+                          <TableRow key={config.id}>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                {config.configName}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                {config.fileName}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2">
+                                {config.displayName}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              {getStatusChip(config.status)}
+                            </TableCell>
+                            <TableCell>
+                              <Chip 
+                                label={config.autoQueryEnabled ? '启用' : '禁用'} 
+                                color={config.autoQueryEnabled ? 'success' : 'default'} 
+                                size="small" 
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2">
+                                {config.queryIntervalMinutes}分钟
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2">
+                                {config.nextQueryTime ? formatDateString(config.nextQueryTime) : '未设置'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Box sx={{ display: 'flex', gap: 1 }}>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => executeJsonConfig(config.id!)}
+                                  title="立即执行"
+                                >
+                                  <PlayArrow />
+                                </IconButton>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => openConfigDialog(config)}
+                                  title="编辑"
+                                >
+                                  <Edit />
+                                </IconButton>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => deleteJsonConfig(config.id!)}
+                                  title="删除"
+                                  color="error"
+                                >
+                                  <Delete />
+                                </IconButton>
+                              </Box>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 配置对话框 */}
+          <Dialog 
+            open={configDialogOpen} 
+            onClose={() => setConfigDialogOpen(false)}
+            maxWidth="md"
+            fullWidth
+          >
+            <DialogTitle>
+              {editingConfig ? '编辑配置' : '添加配置'}
+            </DialogTitle>
+            <DialogContent>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+                {/* JSON文件上传区域 */}
+                {!editingConfig && (
+                  <Card sx={{ mb: 2, bgcolor: 'background.default' }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>
+                        上传JSON配置文件
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        上传Azure凭据JSON文件，系统将自动解析并填充配置信息
+                      </Typography>
+                      <Button
+                        component="label"
+                        variant="outlined"
+                        startIcon={<CloudUpload />}
+                        sx={{ mb: 1 }}
+                      >
+                        选择JSON文件
+                        <VisuallyHiddenInput
+                          type="file"
+                          accept=".json"
+                          onChange={handleJsonFileUpload}
+                        />
+                      </Button>
+                      {uploadedFileName && (
+                        <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>
+                          已上传: {uploadedFileName}
+                        </Typography>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                <TextField
+                  label="配置名称"
+                  value={configForm.configName || ''}
+                  onChange={(e) => setConfigForm({ ...configForm, configName: e.target.value })}
+                  fullWidth
+                  required
+                />
+                <TextField
+                  label="JSON文件名"
+                  value={configForm.fileName || ''}
+                  onChange={(e) => setConfigForm({ ...configForm, fileName: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="上传文件后会自动填充"
+                />
+                <TextField
+                  label="文件路径"
+                  value={configForm.filePath || ''}
+                  onChange={(e) => setConfigForm({ ...configForm, filePath: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="上传文件后会自动填充服务器路径"
+                />
+                <TextField
+                  label="应用ID"
+                  value={configForm.appId || ''}
+                  onChange={(e) => setConfigForm({ ...configForm, appId: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="从JSON文件中自动解析"
+                />
+                <TextField
+                  label="租户ID"
+                  value={configForm.tenantId || ''}
+                  onChange={(e) => setConfigForm({ ...configForm, tenantId: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="从JSON文件中自动解析"
+                />
+                <TextField
+                  label="显示名称"
+                  value={configForm.displayName || ''}
+                  onChange={(e) => setConfigForm({ ...configForm, displayName: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="从JSON文件中自动解析"
+                />
+                <TextField
+                  label="密码"
+                  type="password"
+                  value={configForm.password || ''}
+                  onChange={(e) => setConfigForm({ ...configForm, password: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="从JSON文件中自动解析"
+                />
+                <TextField
+                  label="查询间隔（分钟）"
+                  type="number"
+                  value={configForm.queryIntervalMinutes || 60}
+                  onChange={(e) => setConfigForm({ ...configForm, queryIntervalMinutes: parseInt(e.target.value) || 60 })}
+                  fullWidth
+                  inputProps={{ min: 1, max: 10080 }}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={configForm.autoQueryEnabled || false}
+                      onChange={(e) => setConfigForm({ ...configForm, autoQueryEnabled: e.target.checked })}
+                    />
+                  }
+                  label="启用自动查询"
+                />
+                <FormControl fullWidth>
+                  <InputLabel>状态</InputLabel>
+                  <Select
+                    value={configForm.status || 'active'}
+                    onChange={(e) => setConfigForm({ ...configForm, status: e.target.value as 'active' | 'inactive' | 'error' })}
+                    label="状态"
+                  >
+                    <MenuItem value="active">活跃</MenuItem>
+                    <MenuItem value="inactive">停用</MenuItem>
+                    <MenuItem value="error">错误</MenuItem>
+                  </Select>
+                </FormControl>
+              </Box>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setConfigDialogOpen(false)}>
+                取消
+              </Button>
+              <Button onClick={saveJsonConfig} variant="contained">
+                保存
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Box>
       )}
     </Box>
