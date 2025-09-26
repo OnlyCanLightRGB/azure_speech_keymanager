@@ -92,7 +92,36 @@ dump.rdb
 # Sensitive files - Azure credentials and keys
 test-key.json
 *-key.json
+test-key_*.json
 *.pem
 *.p12
 *.pfx
 azure_credentials_*.json
+service-principal*.json
+sp-*.json
+azure-auth*.json
+
+# Azure CLI and service principal files
+.azure/
+azure-cli-*/
+auth.json
+credentials.json
+
+# Environment files with sensitive data
+.env.production
+.env.staging
+.env.development
+config/production.json
+config/staging.json
+
+# Database dumps and backups
+*.sql
+*.dump
+backup/
+backups/
+
+# Log files that might contain sensitive data
+logs/*.log
+*.log.*
+audit.log
+security.log

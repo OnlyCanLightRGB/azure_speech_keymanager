@@ -23,6 +23,7 @@ export interface JsonCredential {
 export interface JsonBillingRecord {
   id?: number;
   fileName: string;
+  configName?: string;
   filePath: string;
   appId: string;
   tenantId: string;
@@ -120,6 +121,8 @@ export class AutoBillingService {
   private scheduledTaskId?: string;
   private jsonQueryTaskId?: string;
   private jsonDirectory: string;
+  // 新增：存储每个配置的独立定时器
+  private individualTimers: Map<number, NodeJS.Timeout> = new Map();
 
   constructor(
     billingService: BillingService,
@@ -297,69 +300,245 @@ export class AutoBillingService {
    * 启动JSON文件自动查询调度器
    */
   private async startJsonQueryScheduler(): Promise<void> {
-    // 每1分钟检查一次JSON配置并执行到期的查询（支持分钟级查询间隔）
-    this.jsonQueryTaskId = this.schedulerService.addTask({
-      name: 'JSON Config Billing Query',
-      interval: 1 * 60 * 1000, // 1分钟
-      enabled: true,
-      task: async () => {
-        await this.checkAndExecuteJsonConfigQueries();
-      }
-    });
+    // 为每个活跃的JSON配置创建独立的定时器
+    await this.initializeIndividualTimers();
+    
+    logger.info('JSON config individual timers initialized');
+  }
 
-    logger.info(`JSON config billing query scheduler started with task ID: ${this.jsonQueryTaskId}`);
+  /**
+   * 初始化每个JSON配置的独立定时器
+   */
+  private async initializeIndividualTimers(): Promise<void> {
+    try {
+      // 获取所有活跃的JSON配置
+      const activeConfigs = await this.getJsonConfigs('active');
+      
+      for (const config of activeConfigs) {
+        if (config.autoQueryEnabled && config.id) {
+          await this.createIndividualTimer(config);
+        }
+      }
+      
+      logger.info(`Initialized ${this.individualTimers.size} individual timers for JSON configs`);
+    } catch (error) {
+      logger.error('Failed to initialize individual timers:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 为单个JSON配置创建独立定时器
+   */
+  private async createIndividualTimer(config: JsonBillingConfig): Promise<void> {
+    if (!config.id) return;
+
+    // 清除已存在的定时器
+    this.clearIndividualTimer(config.id);
+
+    // 计算下次执行的延迟时间
+    const now = new Date();
+    let nextExecutionTime: Date;
+    
+    if (config.nextQueryTime && new Date(config.nextQueryTime) > now) {
+      // 如果数据库中有下次执行时间且未过期，使用该时间
+      nextExecutionTime = new Date(config.nextQueryTime);
+    } else {
+      // 否则从当前时间开始计算
+      nextExecutionTime = new Date(now.getTime() + config.queryIntervalMinutes * 60 * 1000);
+    }
+    
+    const delayMs = nextExecutionTime.getTime() - now.getTime();
+    
+    logger.info(`Creating timer for config ${config.id} (${config.configName}), next execution at ${nextExecutionTime.toISOString()}, delay: ${Math.round(delayMs / 1000)}s`);
+    
+    const scheduleNextExecution = async () => {
+      try {
+        logger.info(`Executing scheduled query for config ${config.id} (${config.configName})`);
+        
+        // 重新获取最新的配置信息，确保配置仍然有效
+        const [configs] = await this.connection.execute(
+          'SELECT * FROM json_billing_configs WHERE id = ? AND status = "active" AND auto_query_enabled = 1',
+          [config.id]
+        );
+        
+        const configArray = configs as JsonBillingConfig[];
+        if (configArray.length === 0) {
+          logger.info(`Config ${config.id} is no longer active, clearing timer`);
+          this.clearIndividualTimer(config.id!);
+          return;
+        }
+
+        const currentConfig = configArray[0];
+        await this.executeConfigAndScheduleNext(currentConfig);
+      } catch (error) {
+        logger.error(`Error executing scheduled query for config ${config.id}:`, error);
+        // executeConfigAndScheduleNext 方法会处理定时器重新创建
+      }
+    };
+
+    // 使用setTimeout创建精确定时器
+    const timer = setTimeout(scheduleNextExecution, delayMs);
+
+    // 存储定时器
+    this.individualTimers.set(config.id, timer);
+    
+    logger.info(`Timer created for config ${config.id}, will execute at ${nextExecutionTime.toISOString()}`);
+  }
+
+  /**
+   * 执行配置查询并安排下次执行
+   */
+  private async executeConfigAndScheduleNext(config: JsonBillingConfig): Promise<void> {
+    if (!config.id) return;
+
+    let scheduleId: number | null = null;
+    
+    try {
+      // 创建调度记录
+      scheduleId = await this.createJsonSchedule(config.id, new Date());
+      
+      // 更新调度状态为运行中
+      await this.updateJsonScheduleStatus(scheduleId, 'running');
+      
+      // 执行查询
+      await this.executeJsonConfigQuery(config);
+      
+      // 更新调度状态为完成
+      await this.updateJsonScheduleStatus(scheduleId, 'completed', 'Query executed successfully');
+      
+      logger.info(`Successfully executed query for config ${config.id} (${config.configName})`);
+      
+    } catch (error) {
+      logger.error(`Failed to execute query for config ${config.id}:`, error);
+      
+      // 更新调度记录为失败状态
+      if (scheduleId) {
+        try {
+          await this.updateJsonScheduleStatus(scheduleId, 'failed', `Query failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } catch (scheduleError) {
+          logger.error('Failed to update schedule record:', scheduleError);
+        }
+      }
+    }
+    
+    // 无论成功还是失败，都要重新设置定时器以确保持续执行
+    try {
+      const [configs] = await this.connection.execute(
+        'SELECT * FROM json_billing_configs WHERE id = ? AND status = "active" AND auto_query_enabled = 1',
+        [config.id]
+      );
+      
+      const configArray = configs as JsonBillingConfig[];
+      if (configArray.length > 0) {
+        const currentConfig = configArray[0];
+        
+        // 更新配置的查询时间
+        const now = new Date();
+        const nextQueryTime = new Date(now.getTime() + currentConfig.queryIntervalMinutes * 60 * 1000);
+        
+        await this.updateJsonConfigQueryTime(config.id, currentConfig.queryIntervalMinutes);
+        
+        // 重新创建定时器，使用更新后的配置
+        const updatedConfig = { ...currentConfig, lastQueryTime: now, nextQueryTime };
+        await this.createIndividualTimer(updatedConfig);
+        
+        logger.info(`Timer reset for config ${config.id} with interval ${currentConfig.queryIntervalMinutes} minutes`);
+      }
+    } catch (timerError) {
+      logger.error(`Failed to reset timer for config ${config.id}:`, timerError);
+    }
+  }
+
+  /**
+   * 安排下次执行
+   */
+
+
+  /**
+   * 清除单个配置的定时器
+   */
+  private clearIndividualTimer(configId: number): void {
+    const timer = this.individualTimers.get(configId);
+    if (timer) {
+      clearInterval(timer);
+      this.individualTimers.delete(configId);
+      logger.info(`Cleared interval timer for config ${configId}`);
+    }
+  }
+
+  /**
+   * 清除所有独立定时器
+   */
+  private clearAllIndividualTimers(): void {
+    for (const [configId, timer] of this.individualTimers) {
+      clearInterval(timer);
+      logger.info(`Cleared interval timer for config ${configId}`);
+    }
+    this.individualTimers.clear();
   }
 
   /**
    * 检查并执行JSON配置的定期查询
    */
   private async checkAndExecuteJsonConfigQueries(): Promise<void> {
-    try {
-      // 获取需要执行查询的配置
-      const pendingConfigs = await this.getPendingJsonConfigs();
-      
-      logger.info(`Found ${pendingConfigs.length} JSON configs ready for query`);
+    // 这个方法已经不再需要，因为我们使用独立的定时器
+    // 保留方法以防其他地方有调用，但不执行任何操作
+    logger.debug('checkAndExecuteJsonConfigQueries called but skipped - using individual timers instead');
+  }
 
-      for (const config of pendingConfigs) {
+  /**
+   * 手动触发JSON配置查询
+   */
+  async triggerJsonConfigQueries(): Promise<void> {
+    // 手动触发时，直接执行所有活跃配置的查询
+    const activeConfigs = await this.getJsonConfigs('active');
+    
+    for (const config of activeConfigs) {
+      if (config.autoQueryEnabled && config.id) {
         try {
-          // 创建调度记录
-          const scheduleId = await this.createJsonSchedule(config.id!, new Date());
-          
-          // 更新调度状态为运行中
-          await this.updateJsonScheduleStatus(scheduleId, 'running');
-          
-          // 执行查询
-          await this.executeJsonConfigQuery(config);
-          
-          // 更新调度状态为完成
-          await this.updateJsonScheduleStatus(scheduleId, 'completed', 'Query executed successfully');
-          
-          // 更新下次查询时间
-          await this.updateJsonConfigQueryTime(config.id!, config.queryIntervalMinutes);
-          
-          logger.info(`Successfully executed query for config: ${config.configName}`);
+          await this.executeConfigAndScheduleNext(config);
+          logger.info(`Manually triggered query for config: ${config.configName}`);
         } catch (error) {
-          logger.error(`Failed to execute query for config ${config.configName}:`, error);
-          
-          // 如果有调度记录，更新为失败状态
-          try {
-            const scheduleId = await this.createJsonSchedule(config.id!, new Date());
-            await this.updateJsonScheduleStatus(scheduleId, 'failed', error instanceof Error ? error.message : 'Unknown error');
-          } catch (scheduleError) {
-            logger.error('Failed to update schedule status:', scheduleError);
-          }
+          logger.error(`Failed to manually trigger query for config ${config.configName}:`, error);
         }
       }
-    } catch (error) {
-      logger.error('Error in checkAndExecuteJsonConfigQueries:', error);
     }
   }
 
   /**
-   * 手动触发JSON配置查询（公共方法）
+   * 添加新的JSON配置时创建定时器
    */
-  async triggerJsonConfigQueries(): Promise<void> {
-    await this.checkAndExecuteJsonConfigQueries();
+  async addJsonConfigTimer(config: JsonBillingConfig): Promise<void> {
+    if (config.autoQueryEnabled && config.id) {
+      await this.createIndividualTimer(config);
+    }
+  }
+
+  /**
+   * 更新JSON配置时重新创建定时器
+   */
+  async updateJsonConfigTimer(configId: number): Promise<void> {
+    // 清除旧定时器
+    this.clearIndividualTimer(configId);
+    
+    // 获取更新后的配置
+    const [configs] = await this.connection.execute(
+      'SELECT * FROM json_billing_configs WHERE id = ? AND status = "active"',
+      [configId]
+    );
+    
+    const configArray = configs as JsonBillingConfig[];
+    if (configArray.length > 0 && configArray[0].autoQueryEnabled) {
+      await this.createIndividualTimer(configArray[0]);
+    }
+  }
+
+  /**
+   * 删除JSON配置时清除定时器
+   */
+  async removeJsonConfigTimer(configId: number): Promise<void> {
+    this.clearIndividualTimer(configId);
   }
 
   /**
@@ -414,6 +593,7 @@ export class AutoBillingService {
         logger.warn(`Invalid credential format in ${fileName}`);
         await this.saveJsonBillingRecord({
           fileName,
+          configName: undefined, // 文件夹扫描的文件没有配置名称
           filePath,
           appId: credential?.appId || 'unknown',
           tenantId: credential?.tenant || 'unknown',
@@ -429,13 +609,14 @@ export class AutoBillingService {
       logger.info(`Processing JSON file: ${fileName} for tenant: ${credential.tenant}`);
 
       // 尝试获取订阅信息并查询账单
-      await this.queryBillingForCredential(credential, fileName, filePath, lastModified);
+      await this.queryBillingForCredential(credential, fileName, filePath, lastModified, undefined);
 
     } catch (error) {
       logger.error(`Error processing JSON file ${filePath}:`, error);
       const fileName = path.basename(filePath);
       await this.saveJsonBillingRecord({
         fileName,
+        configName: undefined, // 文件夹扫描的文件没有配置名称
         filePath,
         appId: 'unknown',
         tenantId: 'unknown',
@@ -502,7 +683,8 @@ export class AutoBillingService {
     credential: JsonCredential,
     fileName: string,
     filePath: string,
-    lastModified: Date
+    lastModified: Date,
+    configName?: string
   ): Promise<void> {
     try {
       logger.info(`Starting billing query for credential ${fileName} (${credential.appId})`);
@@ -518,6 +700,7 @@ export class AutoBillingService {
       if (!subscriptions || subscriptions.length === 0) {
         await this.saveJsonBillingRecord({
           fileName,
+          configName,
           filePath,
           appId: credential.appId,
           tenantId: credential.tenant,
@@ -557,6 +740,7 @@ export class AutoBillingService {
       // 4. 保存查询结果
       const record: JsonBillingRecord = {
         fileName,
+        configName,
         filePath,
         appId: credential.appId,
         tenantId: credential.tenant,
@@ -578,6 +762,7 @@ export class AutoBillingService {
       logger.error(`Failed to query billing for credential ${fileName}:`, error);
       await this.saveJsonBillingRecord({
         fileName,
+        configName,
         filePath,
         appId: credential.appId,
         tenantId: credential.tenant,
@@ -598,14 +783,15 @@ export class AutoBillingService {
     try {
       const query = `
         INSERT INTO json_billing_history (
-          file_name, file_path, app_id, tenant_id, display_name,
+          file_name, config_name, file_path, app_id, tenant_id, display_name,
           query_date, subscription_id, total_cost, currency,
           billing_data, query_status, error_message, last_modified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const values = [
         record.fileName,
+        record.configName || null,
         record.filePath,
         record.appId,
         record.tenantId,
@@ -641,7 +827,7 @@ export class AutoBillingService {
     const connection = await this.connection.getConnection();
     try {
       let query = `
-        SELECT id, file_name as fileName, file_path as filePath,
+        SELECT id, file_name as fileName, config_name as configName, file_path as filePath,
                app_id as appId, tenant_id as tenantId, display_name as displayName,
                query_date as queryDate, subscription_id as subscriptionId,
                total_cost as totalCost, currency, billing_data as billingData,
@@ -876,10 +1062,6 @@ export class AutoBillingService {
     logger.info(`Executing JSON config query for: ${config.configName}`);
 
     try {
-      // 创建调度记录
-      const scheduleId = await this.createJsonSchedule(config.id!, new Date());
-      await this.updateJsonScheduleStatus(scheduleId, 'running');
-
       // 读取JSON文件
       const content = fs.readFileSync(config.filePath, 'utf8');
       const credential = JSON.parse(content) as JsonCredential;
@@ -889,13 +1071,7 @@ export class AutoBillingService {
       }
 
       // 执行账单查询
-      await this.queryBillingForCredential(credential, config.fileName, config.filePath, new Date());
-
-      // 更新调度状态
-      await this.updateJsonScheduleStatus(scheduleId, 'completed', 'Query completed successfully');
-      
-      // 更新下次查询时间
-      await this.updateJsonConfigQueryTime(config.id!, config.queryIntervalMinutes);
+      await this.queryBillingForCredential(credential, config.fileName, config.filePath, new Date(), config.configName);
 
       logger.info(`Successfully executed JSON config query for: ${config.configName}`);
 
@@ -1527,6 +1703,9 @@ export class AutoBillingService {
       this.schedulerService.stopTask(this.jsonQueryTaskId);
       this.jsonQueryTaskId = undefined;
     }
+
+    // 清除所有独立定时器
+    this.clearAllIndividualTimers();
 
     this.isInitialized = false;
     logger.info('AutoBillingService stopped');

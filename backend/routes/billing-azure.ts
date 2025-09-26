@@ -594,6 +594,13 @@ router.post('/json-configs', async (req, res) => {
       updatedAt: new Date()
     });
 
+    // 获取完整的配置对象并为其创建定时器
+    const configs = await autoBillingService.getJsonConfigs('active');
+    const newConfig = configs.find(c => c.id === configId);
+    if (newConfig && newConfig.autoQueryEnabled) {
+      await autoBillingService.addJsonConfigTimer(newConfig);
+    }
+
     return res.json({
       success: true,
       data: {
@@ -699,6 +706,9 @@ router.put('/json-configs/:id', async (req, res) => {
 
     await autoBillingService.updateJsonConfig(configId, updateData);
 
+    // 更新定时器
+    await autoBillingService.updateJsonConfigTimer(configId);
+
     return res.json({
       success: true,
       data: {
@@ -737,6 +747,9 @@ router.delete('/json-configs/:id', async (req, res) => {
     }
 
     await autoBillingService.deleteJsonConfig(configId);
+
+    // 清除定时器
+    await autoBillingService.removeJsonConfigTimer(configId);
 
     return res.json({
       success: true,
