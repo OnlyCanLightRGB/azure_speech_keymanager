@@ -12,7 +12,3 @@ CREATE TABLE IF NOT EXISTS `database_migrations` (
   UNIQUE KEY `unique_migration_name` (`migration_name`),
   KEY `idx_applied_at` (`applied_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Insert this migration record
-INSERT IGNORE INTO `database_migrations` (`migration_name`, `checksum`) 
-VALUES ('000_create_migrations_table.sql', SHA2('000_create_migrations_table.sql', 256));
