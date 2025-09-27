@@ -65,13 +65,16 @@ COPY --from=builder /app/database ./database
 
 # Copy Python scripts for Azure billing
 COPY az.py /app/az.py
+RUN chmod +x /app/az.py && chown nextjs:nodejs /app/az.py
 
 # Copy startup script
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh && chown nextjs:nodejs /app/start.sh
 
 # Create logs, backups, and uploads directories with proper permissions
-RUN mkdir -p /app/logs /app/backups /app/uploads && chown -R nextjs:nodejs /app/logs /app/backups /app/uploads
+RUN mkdir -p /app/logs /app/backups /app/uploads && \
+    chown -R nextjs:nodejs /app/logs /app/backups /app/uploads && \
+    chmod -R 755 /app/uploads
 
 USER nextjs
 

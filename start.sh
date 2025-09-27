@@ -6,11 +6,11 @@ echo "Starting Azure Speech Key Manager..."
 # Function to handle shutdown
 cleanup() {
     echo "Shutting down services..."
-    if [ ! -z "$BACKEND_PID" ]; then
-        kill $BACKEND_PID 2>/dev/null || true
+    if [ ! -z "$START_PID" ]; then
+        kill $START_PID 2>/dev/null || true
     fi
-    if [ ! -z "$FRONTEND_PID" ]; then
-        kill $FRONTEND_PID 2>/dev/null || true
+    if [ ! -z "$DEV_PID" ]; then
+        kill $DEV_PID 2>/dev/null || true
     fi
     exit 0
 }
@@ -22,14 +22,14 @@ trap cleanup SIGTERM SIGINT
 echo "Waiting for database and redis to be ready..."
 sleep 10
 
-# Start backend in background
-echo "Starting backend server..."
-node dist/server.js &
-BACKEND_PID=$!
+# First run npm start to ensure compilation and proper initialization
+echo "Running npm start for initialization..."
+npm start &
+START_PID=$!
 
-# Wait for backend to be fully ready
-echo "Waiting for backend to be ready..."
-sleep 10
+# Wait for the start process to initialize properly
+echo "Waiting for npm start to initialize..."
+sleep 15
 
 # Verify backend is responding
 echo "Checking backend health..."
@@ -42,12 +42,12 @@ for i in {1..30}; do
     sleep 2
 done
 
-# Start frontend
-echo "Starting frontend server..."
-cd frontend && PORT=3000 npm start &
-FRONTEND_PID=$!
+# Now run npm run dev for development mode (which includes frontend)
+echo "Starting development mode with frontend..."
+npm run dev &
+DEV_PID=$!
 
-echo "Both services started. Backend PID: $BACKEND_PID, Frontend PID: $FRONTEND_PID"
+echo "Both services started. Start PID: $START_PID, Dev PID: $DEV_PID"
 
 # Wait for both processes
-wait $BACKEND_PID $FRONTEND_PID
+wait $START_PID $DEV_PID

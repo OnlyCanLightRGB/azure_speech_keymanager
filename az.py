@@ -1,5 +1,6 @@
 import requests
 import json
+import os
 from datetime import datetime, timedelta
 
 
@@ -301,7 +302,9 @@ def main(credentials_file="azure_credentials.json"):
             }
             
             # 为每个订阅保存单独的文件
-            filename = f'/app/uploads/speech_service_costs_{subscription_id[:8]}.json'
+            # 根据运行环境选择正确的路径
+            uploads_dir = '/app/uploads' if os.path.exists('/app') else 'uploads'
+            filename = f'{uploads_dir}/speech_service_costs_{subscription_id[:8]}.json'
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
             print(f"✅ 订阅 {display_name} 的数据已保存到 {filename}")
@@ -310,7 +313,9 @@ def main(credentials_file="azure_credentials.json"):
     
     # 4. 保存汇总结果
     if all_results:
-        summary_filename = '/app/uploads/speech_service_costs_summary.json'
+        # 根据运行环境选择正确的路径
+        uploads_dir = '/app/uploads' if os.path.exists('/app') else 'uploads'
+        summary_filename = f'{uploads_dir}/speech_service_costs_summary.json'
         with open(summary_filename, 'w', encoding='utf-8') as f:
             json.dump(all_results, f, indent=2, ensure_ascii=False)
         
