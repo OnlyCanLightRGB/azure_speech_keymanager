@@ -61,8 +61,8 @@ COPY --from=builder /app/database ./database
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh && chown nextjs:nodejs /app/start.sh
 
-# Create logs directory with proper permissions
-RUN mkdir -p /app/logs && chown -R nextjs:nodejs /app/logs
+# Create logs and backups directories with proper permissions
+RUN mkdir -p /app/logs /app/backups && chown -R nextjs:nodejs /app/logs /app/backups
 
 USER nextjs
 

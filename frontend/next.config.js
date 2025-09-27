@@ -11,6 +11,7 @@ const nextConfig = {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
     if (!apiUrl) {
       // In production with Docker, backend runs on port 3019 on the same container
+      // Use 127.0.0.1 instead of localhost to avoid IPv6 issues
       return [
         {
           source: '/api/:path*',

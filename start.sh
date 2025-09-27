@@ -27,8 +27,20 @@ echo "Starting backend server..."
 node dist/server.js &
 BACKEND_PID=$!
 
-# Wait a bit for backend to start
-sleep 5
+# Wait for backend to be fully ready
+echo "Waiting for backend to be ready..."
+sleep 10
+
+# Verify backend is responding
+echo "Checking backend health..."
+for i in {1..30}; do
+    if wget --no-verbose --tries=1 --spider http://localhost:3019/api/health 2>/dev/null; then
+        echo "Backend is ready!"
+        break
+    fi
+    echo "Backend not ready yet, waiting... ($i/30)"
+    sleep 2
+done
 
 # Start frontend
 echo "Starting frontend server..."
