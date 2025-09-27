@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - 2024-12-XX
 
 ### Added
-- **项目维护工具**: 新增自动清理脚本 `scripts/cleanup.ts`
+- **项目维护工具**: 新增自动清理脚本 `scripts/cleanup.js`
 - **项目统计功能**: 实时统计项目文件类型和数量
 - **配置检查**: 自动验证 .gitignore 和 package.json 配置
 - **环境状态检查**: 检查开发环境和依赖状态
