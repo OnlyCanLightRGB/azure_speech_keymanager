@@ -39,8 +39,14 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install wget for health checks
-RUN apk add --no-cache wget
+# Configure Alpine mirrors for better connectivity and install dependencies
+RUN echo "https://mirrors.aliyun.com/alpine/v3.21/main" > /etc/apk/repositories && \
+    echo "https://mirrors.aliyun.com/alpine/v3.21/community" >> /etc/apk/repositories && \
+    apk update && \
+    apk add --no-cache wget python3 py3-requests
+
+# Create a symbolic link for python3 to ensure it's in PATH
+RUN ln -sf /usr/bin/python3 /usr/local/bin/python3
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
@@ -57,12 +63,15 @@ COPY --from=builder /app/frontend/.next ./frontend/.next
 COPY --from=builder /app/frontend/public ./frontend/public
 COPY --from=builder /app/database ./database
 
+# Copy Python scripts for Azure billing
+COPY az.py /app/az.py
+
 # Copy startup script
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh && chown nextjs:nodejs /app/start.sh
 
-# Create logs and backups directories with proper permissions
-RUN mkdir -p /app/logs /app/backups && chown -R nextjs:nodejs /app/logs /app/backups
+# Create logs, backups, and uploads directories with proper permissions
+RUN mkdir -p /app/logs /app/backups /app/uploads && chown -R nextjs:nodejs /app/logs /app/backups /app/uploads
 
 USER nextjs
 
