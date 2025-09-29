@@ -114,11 +114,16 @@ credentials.json
 config/production.json
 config/staging.json
 
-# Database dumps and backups
-*.sql
+# Database dumps and backups (exclude migration files)
 *.dump
 backup/
 backups/
+database/backup_*.sql
+database/dump_*.sql
+**/backup_migrations_*/**
+
+# Allow migration files
+!database/migrations/*.sql
 
 # Log files that might contain sensitive data
 logs/*.log
