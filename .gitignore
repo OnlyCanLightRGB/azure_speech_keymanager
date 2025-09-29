@@ -97,6 +97,7 @@ test-key_*.json
 *.p12
 *.pfx
 azure_credentials_*.json
+azure_credentials.json
 service-principal*.json
 sp-*.json
 azure-auth*.json
