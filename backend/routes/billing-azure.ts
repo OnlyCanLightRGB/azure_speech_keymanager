@@ -21,18 +21,28 @@ export function setAutoBillingService(service: AutoBillingService) {
 const jsonConfigStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, '../../json');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    try {
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      cb(null, uploadDir);
+    } catch (error) {
+      console.error('Failed to create upload directory:', error);
+      cb(error as Error, '');
     }
-    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    // 保持原始文件名，但添加时间戳避免冲突
-    const timestamp = Date.now();
-    const originalName = file.originalname;
-    const nameWithoutExt = path.parse(originalName).name;
-    const ext = path.parse(originalName).ext;
-    cb(null, `${nameWithoutExt}_${timestamp}${ext}`);
+    try {
+      // 保持原始文件名，但添加时间戳避免冲突
+      const timestamp = Date.now();
+      const originalName = file.originalname;
+      const nameWithoutExt = path.parse(originalName).name;
+      const ext = path.parse(originalName).ext;
+      cb(null, `${nameWithoutExt}_${timestamp}${ext}`);
+    } catch (error) {
+      console.error('Failed to generate filename:', error);
+      cb(error as Error, '');
+    }
   }
 });
 
@@ -64,16 +74,16 @@ router.post('/upload-json-config', uploadJsonConfig.single('jsonFile'), async (r
     }
 
     const filePath = req.file.path;
-    
+
     // 验证JSON文件格式
     try {
       const fileContent = fs.readFileSync(filePath, 'utf-8');
       const jsonData = JSON.parse(fileContent);
-      
+
       // 验证必要字段
       const requiredFields = ['appId', 'tenant', 'displayName', 'password'];
       const missingFields = requiredFields.filter(field => !jsonData[field]);
-      
+
       if (missingFields.length > 0) {
         // 删除无效文件
         fs.unlinkSync(filePath);
@@ -83,6 +93,50 @@ router.post('/upload-json-config', uploadJsonConfig.single('jsonFile'), async (r
         });
       }
 
+      // 获取表单参数
+      const { configName, queryIntervalMinutes, autoQueryEnabled } = req.body;
+
+      // 如果提供了配置参数，自动保存到数据库
+      if (configName && autoBillingService) {
+        const configId = await autoBillingService.saveJsonConfig({
+          configName,
+          fileName: req.file.filename,
+          filePath: filePath,
+          appId: jsonData.appId,
+          tenantId: jsonData.tenant,
+          displayName: jsonData.displayName,
+          password: jsonData.password,
+          autoQueryEnabled: autoQueryEnabled === 'true' || autoQueryEnabled === true,
+          queryIntervalMinutes: parseInt(queryIntervalMinutes) || 60,
+          status: 'active',
+          createdAt: new Date(),
+          updatedAt: new Date()
+        });
+
+        // 获取完整的配置对象并为其创建定时器
+        const configs = await autoBillingService.getJsonConfigs('active');
+        const newConfig = configs.find(c => c.id === configId);
+        if (newConfig && newConfig.autoQueryEnabled) {
+          await autoBillingService.addJsonConfigTimer(newConfig);
+        }
+
+        return res.json({
+          success: true,
+          message: 'JSON配置文件上传并保存成功',
+          configId,
+          filePath: filePath,
+          fileName: req.file.filename,
+          originalName: req.file.originalname,
+          credentials: {
+            appId: jsonData.appId,
+            tenant: jsonData.tenant,
+            displayName: jsonData.displayName
+            // 不返回密码字段以保证安全
+          }
+        });
+      }
+
+      // 如果没有配置参数，只返回文件上传结果
       return res.json({
         success: true,
         message: 'JSON配置文件上传成功',
@@ -235,6 +289,8 @@ function runAzureBillingScript(credentialsPath: string): Promise<any> {
  * 上传Azure凭据文件并查询账单
  */
 router.post('/upload-credentials', upload.single('credentials'), async (req, res) => {
+  let credentialsPath: string | undefined;
+
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -243,7 +299,7 @@ router.post('/upload-credentials', upload.single('credentials'), async (req, res
       });
     }
     
-    const credentialsPath = req.file.path;
+    credentialsPath = req.file.path;
     const fileName = req.file.filename;
     
     try {
@@ -368,6 +424,15 @@ router.post('/upload-credentials', upload.single('credentials'), async (req, res
     }
     
   } catch (error: any) {
+      // 确保清理上传的文件
+      if (credentialsPath && fs.existsSync(credentialsPath)) {
+        try {
+          fs.unlinkSync(credentialsPath);
+        } catch (cleanupError) {
+          console.error('Failed to cleanup uploaded file:', cleanupError);
+        }
+      }
+
       console.error('Azure账单查询外部错误:', error);
       return res.status(500).json({
         success: false,
@@ -852,6 +917,109 @@ router.post('/json-configs/:id/execute', async (req, res) => {
     return res.status(500).json({ 
       error: 'Internal server error',
       message: 'Failed to execute JSON config query'
+    });
+  }
+});
+
+/**
+ * 添加订阅
+ * POST /api/billing-azure/subscriptions
+ */
+router.post('/subscriptions', async (req, res) => {
+  try {
+    if (!autoBillingService) {
+      return res.status(500).json({
+        success: false,
+        error: 'AutoBillingService not available'
+      });
+    }
+
+    const { subscriptionId, subscriptionName, tenantId, autoQueryEnabled, queryIntervalHours } = req.body;
+
+    if (!subscriptionId || !subscriptionName) {
+      return res.status(400).json({
+        success: false,
+        error: 'subscriptionId and subscriptionName are required'
+      });
+    }
+
+    await autoBillingService.addSubscription(subscriptionId, subscriptionName, {
+      tenantId,
+      autoQueryEnabled: autoQueryEnabled !== false,
+      queryIntervalHours: queryIntervalHours || 24
+    });
+
+    return res.json({
+      success: true,
+      message: 'Subscription added successfully'
+    });
+  } catch (error) {
+    console.error('Error adding subscription:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to add subscription',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * 获取订阅列表
+ * GET /api/billing-azure/subscriptions
+ */
+router.get('/subscriptions', async (req, res) => {
+  try {
+    if (!autoBillingService) {
+      return res.status(500).json({
+        success: false,
+        error: 'AutoBillingService not available'
+      });
+    }
+
+    const subscriptions = await autoBillingService.getSubscriptions();
+
+    return res.json({
+      success: true,
+      data: subscriptions
+    });
+  } catch (error) {
+    console.error('Error getting subscriptions:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to get subscriptions',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * 手动触发订阅查询
+ * POST /api/billing-azure/subscriptions/:subscriptionId/execute
+ */
+router.post('/subscriptions/:subscriptionId/execute', async (req, res) => {
+  try {
+    if (!autoBillingService) {
+      return res.status(500).json({
+        success: false,
+        error: 'AutoBillingService not available'
+      });
+    }
+
+    const { subscriptionId } = req.params;
+
+    await autoBillingService.triggerManualQuery(subscriptionId);
+
+    return res.json({
+      success: true,
+      message: 'Subscription query executed successfully'
+    });
+  } catch (error) {
+    console.error('Error executing subscription query:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to execute subscription query',
+      message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });

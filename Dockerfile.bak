@@ -45,11 +45,14 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Configure Alpine mirrors for better connectivity and install dependencies
-RUN echo "https://mirrors.aliyun.com/alpine/v3.21/main" > /etc/apk/repositories && \
-    echo "https://mirrors.aliyun.com/alpine/v3.21/community" >> /etc/apk/repositories && \
-    apk update && \
-    apk add --no-cache wget python3 py3-requests mysql-client
+# Install system dependencies with fallback mirrors
+RUN apk update && \
+    apk add --no-cache wget python3 py3-requests mysql-client || \
+    (echo "Trying alternative mirrors..." && \
+     echo "https://dl-cdn.alpinelinux.org/alpine/v3.18/main" > /etc/apk/repositories && \
+     echo "https://dl-cdn.alpinelinux.org/alpine/v3.18/community" >> /etc/apk/repositories && \
+     apk update && \
+     apk add --no-cache wget python3 py3-requests mysql-client)
 
 # Create a symbolic link for python3 to ensure it's in PATH
 RUN ln -sf /usr/bin/python3 /usr/local/bin/python3

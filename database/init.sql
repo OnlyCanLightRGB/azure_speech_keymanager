@@ -110,4 +110,91 @@ INSERT IGNORE INTO `system_config` VALUES (2, 'disable_codes', '401,404', 'Statu
 INSERT IGNORE INTO `system_config` VALUES (3, 'cooldown_codes', '429', 'Status codes that trigger cooldown', '2025-06-11 07:20:53');
 INSERT IGNORE INTO `system_config` VALUES (4, 'max_concurrent_requests', '10000', 'Maximum concurrent requests', '2025-06-11 11:40:56');
 
+-- ----------------------------
+-- Table structure for json_billing_configs
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `json_billing_configs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `config_name` varchar(255) NOT NULL,
+  `file_name` varchar(255) NOT NULL,
+  `file_path` varchar(500) NOT NULL,
+  `app_id` varchar(255) NOT NULL,
+  `tenant_id` varchar(255) NOT NULL,
+  `display_name` varchar(255) NOT NULL,
+  `password` text NOT NULL,
+  `auto_query_enabled` boolean NOT NULL DEFAULT false,
+  `query_interval_minutes` int(11) NOT NULL DEFAULT 1440,
+  `last_query_time` timestamp NULL DEFAULT NULL,
+  `next_query_time` timestamp NULL DEFAULT NULL,
+  `status` enum('active','inactive','error') NOT NULL DEFAULT 'active',
+  `error_message` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_config_name` (`config_name`),
+  KEY `idx_auto_query_enabled` (`auto_query_enabled`),
+  KEY `idx_next_query_time` (`next_query_time`),
+  KEY `idx_status` (`status`),
+  KEY `idx_app_id` (`app_id`),
+  KEY `idx_tenant_id` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------
+-- Table structure for json_billing_history
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `json_billing_history` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `file_name` varchar(255) NOT NULL,
+  `file_path` varchar(500) NOT NULL,
+  `app_id` varchar(255) NOT NULL,
+  `tenant_id` varchar(255) NOT NULL,
+  `display_name` varchar(255) NOT NULL,
+  `query_date` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `subscription_id` varchar(255) DEFAULT NULL,
+  `total_cost` decimal(10,4) DEFAULT NULL,
+  `currency` varchar(10) DEFAULT NULL,
+  `billing_data` longtext DEFAULT NULL,
+  `query_status` enum('success','failed','no_subscription') NOT NULL DEFAULT 'no_subscription',
+  `error_message` text DEFAULT NULL,
+  `last_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_file_name` (`file_name`),
+  KEY `idx_app_id` (`app_id`),
+  KEY `idx_tenant_id` (`tenant_id`),
+  KEY `idx_query_date` (`query_date`),
+  KEY `idx_query_status` (`query_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------
+-- Table structure for json_billing_schedules
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `json_billing_schedules` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `config_id` int(11) NOT NULL,
+  `scheduled_time` timestamp NOT NULL,
+  `execution_time` timestamp NULL DEFAULT NULL,
+  `status` enum('pending','running','completed','failed') NOT NULL DEFAULT 'pending',
+  `result_message` text DEFAULT NULL,
+  `billing_history_id` int(11) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `fk_schedules_config_id` (`config_id`),
+  KEY `fk_schedules_billing_history_id` (`billing_history_id`),
+  KEY `idx_scheduled_time` (`scheduled_time`),
+  KEY `idx_status` (`status`),
+  CONSTRAINT `fk_schedules_config_id` FOREIGN KEY (`config_id`) REFERENCES `json_billing_configs` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_schedules_billing_history_id` FOREIGN KEY (`billing_history_id`) REFERENCES `json_billing_history` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ----------------------------
+-- Records of system_config for JSON billing
+-- ----------------------------
+INSERT IGNORE INTO `system_config` VALUES (5, 'json_billing_default_interval_minutes', '1440', 'Default interval in minutes for JSON billing auto-query', NOW());
+INSERT IGNORE INTO `system_config` VALUES (6, 'json_billing_max_configs', '50', 'Maximum number of JSON billing configurations allowed', NOW());
+INSERT IGNORE INTO `system_config` VALUES (7, 'json_billing_scheduler_enabled', 'true', 'Enable/disable JSON billing scheduler', NOW());
+INSERT IGNORE INTO `system_config` VALUES (8, 'json_billing_concurrent_queries', '3', 'Maximum concurrent JSON billing queries', NOW());
+
 SET FOREIGN_KEY_CHECKS = 1;

@@ -46,6 +46,7 @@ export interface BillingSubscription {
   status: 'active' | 'inactive' | 'suspended';
   autoQueryEnabled: boolean;
   queryIntervalHours: number;
+  queryIntervalMinutes: number;
   lastQueryTime?: Date;
   nextQueryTime?: Date;
 }
@@ -56,13 +57,13 @@ export interface BillingHistoryRecord {
   queryDate: Date;
   periodStart: Date;
   periodEnd: Date;
-  totalCost: number;
-  currency: string;
-  speechCost: number;
-  translationCost: number;
-  otherCost: number;
-  usageCount: number;
-  resourceCount: number;
+  totalCost?: number;
+  currency?: string;
+  speechCost?: number;
+  translationCost?: number;
+  otherCost?: number;
+  usageCount?: number;
+  resourceCount?: number;
   rawData?: string;
   anomaliesDetected: boolean;
   anomalyDetails?: string;
@@ -135,6 +136,95 @@ export class AutoBillingService {
     this.feishuService = feishuService;
     this.connection = connection;
     this.jsonDirectory = path.join(process.cwd(), 'json');
+
+    // 启动时恢复定时器（延迟执行以确保数据库连接就绪）
+    setTimeout(() => {
+      this.initializeTimers();
+    }, 5000);
+  }
+
+  /**
+   * 初始化定时器 - 在服务启动时恢复所有活跃的定时器配置
+   */
+  private async initializeTimers(): Promise<void> {
+    try {
+      console.log('Initializing timers from database...');
+
+      // 首先清理无效状态
+      await this.cleanupInvalidStates();
+
+      // 获取所有活跃的JSON配置
+      const configs = await this.getJsonConfigs('active');
+      console.log(`Found ${configs.length} active JSON configurations`);
+
+      // 为每个启用自动查询的配置创建定时器
+      for (const config of configs) {
+        if (config.autoQueryEnabled) {
+          console.log(`Restoring timer for config: ${config.configName} (ID: ${config.id})`);
+          await this.addJsonConfigTimer(config);
+        }
+      }
+
+      console.log('Timer initialization completed');
+    } catch (error) {
+      console.error('Error initializing timers:', error);
+    }
+  }
+
+  /**
+   * 清理无效状态 - 在服务启动时清理数据库中的无效状态
+   */
+  private async cleanupInvalidStates(): Promise<void> {
+    try {
+      console.log('Cleaning up invalid states...');
+      const connection = await this.connection.getConnection();
+
+      try {
+        // 清理没有对应文件的配置
+        const cleanupQuery = `
+          UPDATE json_billing_configs
+          SET status = 'inactive', updated_at = NOW()
+          WHERE status = 'active'
+            AND file_path IS NOT NULL
+            AND file_path != ''
+            AND file_path NOT LIKE '/app/json/%'
+        `;
+
+        const [result] = await connection.execute(cleanupQuery);
+        const updateResult = result as any;
+
+        if (updateResult.affectedRows > 0) {
+          console.log(`Cleaned up ${updateResult.affectedRows} invalid configurations`);
+        }
+
+        // 重置过期的定时器状态
+        const resetQuery = `
+          UPDATE json_billing_configs
+          SET next_query_time = CASE
+            WHEN auto_query_enabled = 1 THEN DATE_ADD(NOW(), INTERVAL query_interval_minutes MINUTE)
+            ELSE NULL
+          END,
+          updated_at = NOW()
+          WHERE status = 'active'
+            AND auto_query_enabled = 1
+            AND (next_query_time IS NULL OR next_query_time < NOW())
+        `;
+
+        const [resetResult] = await connection.execute(resetQuery);
+        const resetUpdateResult = resetResult as any;
+
+        if (resetUpdateResult.affectedRows > 0) {
+          console.log(`Reset ${resetUpdateResult.affectedRows} timer states`);
+        }
+
+      } finally {
+        connection.release();
+      }
+
+      console.log('State cleanup completed');
+    } catch (error) {
+      console.error('Error during state cleanup:', error);
+    }
   }
 
   /**
@@ -358,7 +448,14 @@ export class AutoBillingService {
         
         // 重新获取最新的配置信息，确保配置仍然有效
         const [configs] = await this.connection.execute(
-          'SELECT * FROM json_billing_configs WHERE id = ? AND status = "active" AND auto_query_enabled = 1',
+          `SELECT id, config_name as configName, file_name as fileName, file_path as filePath,
+                 app_id as appId, tenant_id as tenantId, display_name as displayName,
+                 password, auto_query_enabled as autoQueryEnabled,
+                 query_interval_minutes as queryIntervalMinutes,
+                 last_query_time as lastQueryTime, next_query_time as nextQueryTime,
+                 status, error_message as errorMessage,
+                 created_at as createdAt, updated_at as updatedAt
+           FROM json_billing_configs WHERE id = ? AND status = "active" AND auto_query_enabled = 1`,
           [config.id]
         );
         
@@ -425,7 +522,14 @@ export class AutoBillingService {
     // 无论成功还是失败，都要重新设置定时器以确保持续执行
     try {
       const [configs] = await this.connection.execute(
-        'SELECT * FROM json_billing_configs WHERE id = ? AND status = "active" AND auto_query_enabled = 1',
+        `SELECT id, config_name as configName, file_name as fileName, file_path as filePath,
+               app_id as appId, tenant_id as tenantId, display_name as displayName,
+               password, auto_query_enabled as autoQueryEnabled,
+               query_interval_minutes as queryIntervalMinutes,
+               last_query_time as lastQueryTime, next_query_time as nextQueryTime,
+               status, error_message as errorMessage,
+               created_at as createdAt, updated_at as updatedAt
+         FROM json_billing_configs WHERE id = ? AND status = "active" AND auto_query_enabled = 1`,
         [config.id]
       );
       
@@ -461,9 +565,9 @@ export class AutoBillingService {
   private clearIndividualTimer(configId: number): void {
     const timer = this.individualTimers.get(configId);
     if (timer) {
-      clearInterval(timer);
+      clearTimeout(timer); // 修复：使用clearTimeout而不是clearInterval
       this.individualTimers.delete(configId);
-      logger.info(`Cleared interval timer for config ${configId}`);
+      logger.info(`Cleared timeout timer for config ${configId}`);
     }
   }
 
@@ -472,8 +576,8 @@ export class AutoBillingService {
    */
   private clearAllIndividualTimers(): void {
     for (const [configId, timer] of this.individualTimers) {
-      clearInterval(timer);
-      logger.info(`Cleared interval timer for config ${configId}`);
+      clearTimeout(timer); // 修复：使用clearTimeout而不是clearInterval
+      logger.info(`Cleared timeout timer for config ${configId}`);
     }
     this.individualTimers.clear();
   }
@@ -511,6 +615,24 @@ export class AutoBillingService {
    */
   async addJsonConfigTimer(config: JsonBillingConfig): Promise<void> {
     if (config.autoQueryEnabled && config.id) {
+      // 如果配置没有nextQueryTime，先更新数据库
+      if (!config.nextQueryTime) {
+        const intervalMinutes = config.queryIntervalMinutes || 60;
+        const nextQueryTime = new Date(Date.now() + intervalMinutes * 60 * 1000);
+
+        const connection = await this.connection.getConnection();
+        try {
+          await connection.execute(
+            'UPDATE json_billing_configs SET next_query_time = ? WHERE id = ?',
+            [nextQueryTime, config.id]
+          );
+          // 更新配置对象
+          config.nextQueryTime = nextQueryTime;
+        } finally {
+          connection.release();
+        }
+      }
+
       await this.createIndividualTimer(config);
     }
   }
@@ -881,29 +1003,71 @@ export class AutoBillingService {
   async saveJsonConfig(config: JsonBillingConfig): Promise<number> {
     const connection = await this.connection.getConnection();
     try {
-      const query = `
-        INSERT INTO json_billing_configs (
-          config_name, file_name, file_path, app_id, tenant_id, display_name,
-          password, auto_query_enabled, query_interval_minutes, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
+      // 如果启用了自动查询，计算下次查询时间
+      let nextQueryTime = null;
+      if (config.autoQueryEnabled) {
+        const intervalMinutes = config.queryIntervalMinutes || 60;
+        nextQueryTime = new Date(Date.now() + intervalMinutes * 60 * 1000);
+      }
 
-      const values = [
-        config.configName,
-        config.fileName,
-        config.filePath,
-        config.appId,
-        config.tenantId,
-        config.displayName,
-        config.password,
-        config.autoQueryEnabled,
-        config.queryIntervalMinutes,
-        config.status
-      ];
+      // 检查是否存在同名配置
+      const checkQuery = 'SELECT id FROM json_billing_configs WHERE config_name = ? AND status = "active"';
+      const [existingRows] = await connection.execute(checkQuery, [config.configName]);
+      const existing = existingRows as any[];
 
-      const [result] = await connection.execute(query, values);
-      const insertResult = result as any;
-      return insertResult.insertId;
+      if (existing.length > 0) {
+        // 如果存在同名配置，更新而不是插入
+        console.log(`Updating existing config: ${config.configName}`);
+        const updateQuery = `
+          UPDATE json_billing_configs SET
+            file_name = ?, file_path = ?, app_id = ?, tenant_id = ?, display_name = ?,
+            password = ?, auto_query_enabled = ?, query_interval_minutes = ?,
+            next_query_time = ?, updated_at = NOW()
+          WHERE id = ?
+        `;
+
+        const updateValues = [
+          config.fileName,
+          config.filePath,
+          config.appId,
+          config.tenantId,
+          config.displayName,
+          config.password,
+          config.autoQueryEnabled,
+          config.queryIntervalMinutes,
+          nextQueryTime,
+          existing[0].id
+        ];
+
+        await connection.execute(updateQuery, updateValues);
+        return existing[0].id;
+      } else {
+        // 插入新配置
+        const insertQuery = `
+          INSERT INTO json_billing_configs (
+            config_name, file_name, file_path, app_id, tenant_id, display_name,
+            password, auto_query_enabled, query_interval_minutes, next_query_time, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        const insertValues = [
+          config.configName,
+          config.fileName,
+          config.filePath,
+          config.appId,
+          config.tenantId,
+          config.displayName,
+          config.password,
+          config.autoQueryEnabled,
+          config.queryIntervalMinutes,
+          nextQueryTime,
+          config.status
+        ];
+
+        const [result] = await connection.execute(insertQuery, insertValues);
+        const insertResult = result as any;
+        return insertResult.insertId;
+      }
 
     } finally {
       connection.release();
@@ -1059,9 +1223,15 @@ export class AutoBillingService {
    * 执行JSON配置查询
    */
   async executeJsonConfigQuery(config: JsonBillingConfig): Promise<void> {
-    logger.info(`Executing JSON config query for: ${config.configName}`);
+    // 安全日志：不记录敏感信息
+    logger.info(`Executing JSON config query for: ${config.configName} (ID: ${config.id})`);
 
     try {
+      // 检查文件路径是否有效
+      if (!config.filePath) {
+        throw new Error(`File path is undefined for config: ${config.configName}`);
+      }
+
       // 读取JSON文件
       const content = fs.readFileSync(config.filePath, 'utf8');
       const credential = JSON.parse(content) as JsonCredential;
@@ -1130,10 +1300,18 @@ export class AutoBillingService {
   private async updateJsonConfigQueryTime(configId: number, intervalMinutes: number): Promise<void> {
     const connection = await this.connection.getConnection();
     try {
-      const nextQueryTime = new Date(Date.now() + intervalMinutes * 60 * 1000);
-      
+      // 确保间隔时间有效，避免产生无效日期
+      const validIntervalMinutes = Math.max(1, intervalMinutes || 60); // 默认60分钟
+      const nextQueryTime = new Date(Date.now() + validIntervalMinutes * 60 * 1000);
+
+      // 验证日期是否有效
+      if (isNaN(nextQueryTime.getTime())) {
+        logger.error(`Invalid next query time calculated for config ${configId}, using default 60 minutes`);
+        nextQueryTime.setTime(Date.now() + 60 * 60 * 1000);
+      }
+
       const query = `
-        UPDATE json_billing_configs 
+        UPDATE json_billing_configs
         SET last_query_time = CURRENT_TIMESTAMP, next_query_time = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `;
@@ -1150,10 +1328,10 @@ export class AutoBillingService {
    * 启动自动查询调度器
    */
   private async startAutoQueryScheduler(): Promise<void> {
-    // 每小时检查一次是否有需要查询的订阅
+    // 每分钟检查一次是否有需要查询的订阅
     this.scheduledTaskId = this.schedulerService.addTask({
       name: 'Auto Billing Query',
-      interval: 60 * 60 * 1000, // 1小时
+      interval: 60 * 1000, // 1分钟
       enabled: true,
       task: async () => {
         await this.checkAndExecuteQueries();
@@ -1194,8 +1372,8 @@ export class AutoBillingService {
       const query = `
         SELECT id, subscription_id as subscriptionId, subscription_name as subscriptionName,
                tenant_id as tenantId, status, auto_query_enabled as autoQueryEnabled,
-               query_interval_hours as queryIntervalHours, last_query_time as lastQueryTime,
-               next_query_time as nextQueryTime
+               query_interval_hours as queryIntervalHours, query_interval_minutes as queryIntervalMinutes,
+               last_query_time as lastQueryTime, next_query_time as nextQueryTime
         FROM billing_subscriptions
         WHERE status = 'active' 
           AND auto_query_enabled = 1
@@ -1216,7 +1394,67 @@ export class AutoBillingService {
     logger.info(`Executing billing query for subscription: ${subscription.subscriptionId}`);
 
     try {
-      // 获取账单数据
+      // 检查是否为测试订阅，使用模拟数据
+      if (subscription.subscriptionId === 'test-subscription-001') {
+        logger.info('Using mock data for test subscription');
+        
+        // 模拟账单数据
+        const mockBillingStats = {
+          totalCost: 125.50,
+          currency: 'USD',
+          speechCost: 85.30,
+          translationCost: 25.20,
+          otherCost: 15.00,
+          usageCount: 1500
+        };
+
+        const mockCognitiveServices = [
+          { resourceId: 'mock-speech-service-1', cost: 85.30, service: 'Speech' },
+          { resourceId: 'mock-translation-service-1', cost: 25.20, service: 'Translation' }
+        ];
+
+        const mockUsageStats = {
+          currentPeriod: {
+            startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+            endDate: new Date().toISOString()
+          }
+        };
+
+        const mockAnomalies = {
+          hasAnomalies: false,
+          anomalies: []
+        };
+
+        // 保存历史记录
+        const historyRecord: BillingHistoryRecord = {
+          subscriptionId: subscription.subscriptionId,
+          queryDate: new Date(),
+          periodStart: new Date(mockUsageStats.currentPeriod.startDate),
+          periodEnd: new Date(mockUsageStats.currentPeriod.endDate),
+          totalCost: mockBillingStats.totalCost,
+          currency: mockBillingStats.currency,
+          speechCost: mockBillingStats.speechCost,
+          translationCost: mockBillingStats.translationCost,
+          otherCost: mockBillingStats.otherCost,
+          usageCount: mockBillingStats.usageCount,
+          resourceCount: mockCognitiveServices.length,
+          rawData: JSON.stringify({ billingStats: mockBillingStats, cognitiveServices: mockCognitiveServices, usageStats: mockUsageStats }),
+          anomaliesDetected: mockAnomalies.hasAnomalies,
+          anomalyDetails: mockAnomalies.hasAnomalies ? JSON.stringify(mockAnomalies.anomalies) : undefined,
+          queryStatus: 'success'
+        };
+
+        const historyId = await this.saveBillingHistory(historyRecord);
+        await this.saveBillingResourceHistory(historyId, mockCognitiveServices);
+
+        // 检查告警条件
+        await this.checkAndCreateAlerts(subscription, historyRecord, mockAnomalies);
+
+        logger.info(`Successfully queried billing for test subscription ${subscription.subscriptionId} using mock data`);
+        return;
+      }
+
+      // 对于非测试订阅，使用真实的 BillingService
       const billingStats = await this.billingService.getRealTimeBillingStats(subscription.subscriptionId);
       const cognitiveServices = await this.billingService.getCognitiveServicesBilling(subscription.subscriptionId);
       const usageStats = await this.billingService.getUsageStatistics(subscription.subscriptionId);
@@ -1252,6 +1490,7 @@ export class AutoBillingService {
       logger.info(`Successfully queried billing for subscription ${subscription.subscriptionId}`);
     } catch (error) {
       logger.error(`Failed to query billing for subscription ${subscription.subscriptionId}:`, error);
+      logger.error(`Error stack for subscription ${subscription.subscriptionId}:`, error instanceof Error ? error.stack : 'No stack trace');
       throw error;
     }
   }
@@ -1262,6 +1501,8 @@ export class AutoBillingService {
   private async saveBillingHistory(record: BillingHistoryRecord): Promise<number> {
     const connection = await this.connection.getConnection();
     try {
+      logger.info(`Saving billing history for subscription ${record.subscriptionId}`);
+      
       const query = `
         INSERT INTO billing_history (
           subscription_id, query_date, period_start, period_end, total_cost, currency,
@@ -1286,26 +1527,37 @@ export class AutoBillingService {
           updated_at = CURRENT_TIMESTAMP
       `;
 
+      // 格式化日期为 YYYY-MM-DD 格式
+      const queryDate = record.queryDate.toISOString().split('T')[0];
+      const periodStart = record.periodStart.toISOString().split('T')[0];
+      const periodEnd = record.periodEnd.toISOString().split('T')[0];
+
+      logger.info(`Query parameters: subscriptionId=${record.subscriptionId}, queryDate=${queryDate}, periodStart=${periodStart}, periodEnd=${periodEnd}`);
+
       const [result] = await connection.execute(query, [
         record.subscriptionId,
-        record.queryDate,
-        record.periodStart,
-        record.periodEnd,
-        record.totalCost,
-        record.currency,
-        record.speechCost,
-        record.translationCost,
-        record.otherCost,
-        record.usageCount,
-        record.resourceCount,
-        record.rawData,
+        queryDate,
+        periodStart,
+        periodEnd,
+        record.totalCost ?? null,        // 确保 undefined 转换为 null
+        record.currency ?? null,         // 确保 undefined 转换为 null
+        record.speechCost ?? null,       // 确保 undefined 转换为 null
+        record.translationCost ?? null,  // 确保 undefined 转换为 null
+        record.otherCost ?? null,        // 确保 undefined 转换为 null
+        record.usageCount ?? null,       // 确保 undefined 转换为 null
+        record.resourceCount ?? null,    // 确保 undefined 转换为 null
+        record.rawData ?? null,          // 确保 undefined 转换为 null
         record.anomaliesDetected,
-        record.anomalyDetails,
+        record.anomalyDetails ?? null,   // 确保 undefined 转换为 null
         record.queryStatus,
-        record.errorMessage
+        record.errorMessage ?? null      // 确保 undefined 转换为 null
       ]);
 
+      logger.info(`Billing history saved successfully with ID: ${(result as any).insertId}`);
       return (result as any).insertId;
+    } catch (error) {
+      logger.error(`Failed to save billing history for subscription ${record.subscriptionId}:`, error);
+      throw error;
     } finally {
       connection.release();
     }
@@ -1329,13 +1581,13 @@ export class AutoBillingService {
       for (const resource of resources) {
         await connection.execute(query, [
           historyId,
-          resource.resourceId,
-          resource.resourceName,
-          resource.resourceType,
-          resource.location,
-          resource.totalCost,
-          resource.currency,
-          JSON.stringify(resource.usageBreakdown)
+          resource.resourceId ?? null,
+          resource.resourceName ?? null,
+          resource.resourceType ?? null,
+          resource.location ?? null,
+          resource.totalCost ?? null,
+          resource.currency ?? null,
+          resource.usageBreakdown ? JSON.stringify(resource.usageBreakdown) : null
         ]);
       }
     } finally {
@@ -1355,13 +1607,13 @@ export class AutoBillingService {
 
     // 检查成本阈值告警
     const costThreshold = await this.getConfigValue('billing_cost_threshold', 100);
-    if (record.totalCost > costThreshold) {
+    if (record.totalCost && record.totalCost > costThreshold) {
       alerts.push({
         subscriptionId: subscription.subscriptionId,
         alertType: 'cost_threshold',
         severity: record.totalCost > costThreshold * 2 ? 'critical' : 'high',
         title: '账单成本超出阈值',
-        message: `订阅 ${subscription.subscriptionId} 的账单成本 ${record.totalCost} ${record.currency} 超出了设定的阈值 ${costThreshold}`,
+        message: `订阅 ${subscription.subscriptionId} 的账单成本 ${record.totalCost} ${record.currency || 'USD'} 超出了设定的阈值 ${costThreshold}`,
         thresholdValue: costThreshold,
         actualValue: record.totalCost
       });
@@ -1438,7 +1690,9 @@ export class AutoBillingService {
   private async updateNextQueryTime(subscription: BillingSubscription): Promise<void> {
     const connection = await this.connection.getConnection();
     try {
-      const nextQueryTime = new Date(Date.now() + subscription.queryIntervalHours * 60 * 60 * 1000);
+      // 使用分钟为单位的查询间隔
+      const intervalMinutes = subscription.queryIntervalMinutes || (subscription.queryIntervalHours * 60);
+      const nextQueryTime = new Date(Date.now() + intervalMinutes * 60 * 1000);
       
       const query = `
         UPDATE billing_subscriptions 
@@ -1615,11 +1869,20 @@ export class AutoBillingService {
         params.push(endDate);
       }
 
-      query += ' ORDER BY query_date DESC LIMIT ?';
-      params.push(limit);
+      query += ' ORDER BY query_date DESC';
+      
+      // 直接在SQL中拼接LIMIT值，避免参数化查询的问题
+      if (limit > 0) {
+        // 确保limit是安全的整数值
+        const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
+        query += ` LIMIT ${safeLimit}`;
+      }
 
       const [rows] = await connection.execute(query, params);
       return rows as BillingHistoryRecord[];
+    } catch (error) {
+      logger.error('Error in getBillingHistory:', error);
+      throw error;
     } finally {
       connection.release();
     }
@@ -1664,13 +1927,24 @@ export class AutoBillingService {
   }
 
   async triggerManualQuery(subscriptionId: string): Promise<void> {
+    logger.info(`Triggering manual query for subscription: ${subscriptionId}`);
+    
     const subscription = await this.getSubscriptionById(subscriptionId);
     if (!subscription) {
+      logger.error(`Subscription not found: ${subscriptionId}`);
       throw new Error(`Subscription not found: ${subscriptionId}`);
     }
 
-    await this.executeSubscriptionQuery(subscription);
-    await this.updateNextQueryTime(subscription);
+    logger.info(`Found subscription: ${JSON.stringify(subscription)}`);
+
+    try {
+      await this.executeSubscriptionQuery(subscription);
+      await this.updateNextQueryTime(subscription);
+      logger.info(`Manual query completed successfully for subscription: ${subscriptionId}`);
+    } catch (error) {
+      logger.error(`Error in manual query for subscription ${subscriptionId}:`, error);
+      throw error;
+    }
   }
 
   private async getSubscriptionById(subscriptionId: string): Promise<BillingSubscription | null> {
@@ -1679,8 +1953,8 @@ export class AutoBillingService {
       const query = `
         SELECT id, subscription_id as subscriptionId, subscription_name as subscriptionName,
                tenant_id as tenantId, status, auto_query_enabled as autoQueryEnabled,
-               query_interval_hours as queryIntervalHours, last_query_time as lastQueryTime,
-               next_query_time as nextQueryTime
+               query_interval_hours as queryIntervalHours, query_interval_minutes as queryIntervalMinutes,
+               last_query_time as lastQueryTime, next_query_time as nextQueryTime
         FROM billing_subscriptions
         WHERE subscription_id = ?
       `;

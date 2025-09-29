@@ -39,9 +39,6 @@ import {
 } from '@mui/material';
 import {
   CloudUpload,
-  CheckCircle,
-  Error as ErrorIcon,
-  Info,
   ExpandMore,
   ExpandLess,
   AccountBalance,
@@ -54,8 +51,7 @@ import {
   Add,
   Edit,
   Delete,
-  PlayArrow,
-  Stop
+  PlayArrow
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
 
@@ -171,7 +167,7 @@ const AzureBillingUpload: React.FC = () => {
   const [showExample, setShowExample] = useState(false);
   const [example, setExample] = useState<CredentialsExample | null>(null);
   const [showDetails, setShowDetails] = useState(false);
-  
+
   // 历史记录相关状态
   const [tabValue, setTabValue] = useState(0);
   const [historyData, setHistoryData] = useState<JsonBillingHistoryRecord[]>([]);
@@ -180,7 +176,7 @@ const AzureBillingUpload: React.FC = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(10);
-  
+
   // 筛选条件
   const [filterFileName, setFilterFileName] = useState('');
   const [filterStartDate, setFilterStartDate] = useState('');
@@ -207,7 +203,6 @@ const AzureBillingUpload: React.FC = () => {
 
   // JSON文件上传相关状态
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
-  const [uploadedFileContent, setUploadedFileContent] = useState<any>(null);
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
     if (selectedFile) {
@@ -279,17 +274,17 @@ const AzureBillingUpload: React.FC = () => {
   const fetchHistory = async () => {
     setHistoryLoading(true);
     setHistoryError(null);
-    
+
     try {
       const params = new URLSearchParams();
       if (filterFileName) params.append('fileName', filterFileName);
       if (filterStartDate) params.append('startDate', filterStartDate);
       if (filterEndDate) params.append('endDate', filterEndDate);
       params.append('limit', (currentPage * pageSize).toString());
-      
+
       const response = await fetch(`/api/billing-azure/json-history?${params.toString()}`);
       const data: JsonBillingHistoryResponse = await response.json();
-      
+
       if (response.ok && data.success && data.data) {
         setHistoryData(data.data.history);
         setTotalCount(data.data.totalCount);
@@ -304,7 +299,7 @@ const AzureBillingUpload: React.FC = () => {
   };
 
   // 处理标签页切换
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
     if (newValue === 1 && historyData.length === 0) {
       fetchHistory();
@@ -352,11 +347,11 @@ const AzureBillingUpload: React.FC = () => {
         setConfigsError('JSON文件格式错误，请检查文件内容');
         return;
       }
-      
+
       // 验证必要字段
       const requiredFields = ['appId', 'tenant', 'displayName', 'password'];
       const missingFields = requiredFields.filter(field => !jsonData[field] || jsonData[field].toString().trim() === '');
-      
+
       if (missingFields.length > 0) {
         setConfigsError(`JSON文件缺少必要字段：${missingFields.join(', ')}`);
         return;
@@ -376,14 +371,14 @@ const AzureBillingUpload: React.FC = () => {
       // 上传文件到服务器
       const formData = new FormData();
       formData.append('jsonFile', selectedFile);
-      
+
       const uploadResponse = await fetch('/api/billing-azure/upload-json-config', {
         method: 'POST',
         body: formData,
       });
 
       const uploadResult = await uploadResponse.json();
-      
+
       if (uploadResponse.ok && uploadResult.success) {
         // 自动填充表单
         setConfigForm({
@@ -396,9 +391,8 @@ const AzureBillingUpload: React.FC = () => {
           displayName: jsonData.displayName,
           password: jsonData.password,
         });
-        
+
         setUploadedFileName(selectedFile.name);
-        setUploadedFileContent(jsonData);
         setConfigsError(null);
       } else {
         setConfigsError(uploadResult.error || '文件上传失败');
@@ -412,11 +406,11 @@ const AzureBillingUpload: React.FC = () => {
   const fetchJsonConfigs = async () => {
     setConfigsLoading(true);
     setConfigsError(null);
-    
+
     try {
       const response = await fetch('/api/billing-azure/json-configs');
       const data: JsonBillingConfigResponse = await response.json();
-      
+
       if (response.ok && data.success && data.data) {
         setJsonConfigs(data.data.configs);
       } else {
@@ -431,12 +425,12 @@ const AzureBillingUpload: React.FC = () => {
 
   const saveJsonConfig = async () => {
     try {
-      const url = editingConfig 
+      const url = editingConfig
         ? `/api/billing-azure/json-configs/${editingConfig.id}`
         : '/api/billing-azure/json-configs';
-      
+
       const method = editingConfig ? 'PUT' : 'POST';
-      
+
       const response = await fetch(url, {
         method,
         headers: {
@@ -462,7 +456,7 @@ const AzureBillingUpload: React.FC = () => {
 
   const deleteJsonConfig = async (configId: number) => {
     if (!confirm('确定要删除这个配置吗？')) return;
-    
+
     try {
       const response = await fetch(`/api/billing-azure/json-configs/${configId}`, {
         method: 'DELETE',
@@ -536,11 +530,10 @@ const AzureBillingUpload: React.FC = () => {
     });
     // 重置上传状态
     setUploadedFileName('');
-    setUploadedFileContent(null);
   };
 
   // 处理分页
-  const handlePageChange = (event: React.ChangeEvent<unknown>, page: number) => {
+  const handlePageChange = (_event: React.ChangeEvent<unknown>, page: number) => {
     setCurrentPage(page);
   };
 
@@ -584,26 +577,55 @@ const AzureBillingUpload: React.FC = () => {
 
   // 当筛选条件或分页改变时重新获取数据
   useEffect(() => {
-    if (tabValue === 1) {
-      fetchHistory();
-    } else if (tabValue === 2) {
-      fetchJsonConfigs(); // 当切换到JSON配置标签页时加载配置
-    }
+    let isMounted = true; // 防止组件卸载后的状态更新
+
+    const loadData = async () => {
+      try {
+        if (tabValue === 1 && isMounted) {
+          await fetchHistory();
+        } else if (tabValue === 2 && isMounted) {
+          await fetchJsonConfigs(); // 当切换到JSON配置标签页时加载配置
+        }
+      } catch (error) {
+        if (isMounted) {
+          console.error('Failed to load data:', error);
+        }
+      }
+    };
+
+    loadData();
+
+    // 清理函数
+    return () => {
+      isMounted = false;
+    };
   }, [tabValue, filterFileName, filterStartDate, filterEndDate, currentPage, pageSize]);
 
   // 初始化加载数据
   useEffect(() => {
-    fetchHistory();
-    fetchJsonConfigs();
+    let isMounted = true;
+
+    const initializeData = async () => {
+      try {
+        if (isMounted) {
+          await Promise.all([fetchHistory(), fetchJsonConfigs()]);
+        }
+      } catch (error) {
+        if (isMounted) {
+          console.error('Failed to initialize data:', error);
+        }
+      }
+    };
+
+    initializeData();
+
+    // 清理函数
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('zh-CN', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2
-    }).format(amount);
-  };
+
 
   const parseResourceId = (resourceId: string) => {
     const parts = resourceId.split('/');
@@ -629,7 +651,6 @@ const AzureBillingUpload: React.FC = () => {
 
     // 计算汇总数据
     let totalCost = 0;
-    let totalServices = 0;
     const subscriptions = Object.keys(data);
     const resourceNames = new Set<string>();
     const serviceDetails: any[] = [];
@@ -656,7 +677,6 @@ const AzureBillingUpload: React.FC = () => {
       }
     });
 
-    totalServices = new Set(serviceDetails.map(s => s.meter)).size;
     const avgDailyCost = serviceDetails.length > 0 ? totalCost / new Set(serviceDetails.map(s => s.date)).size : 0;
 
     return (
@@ -665,7 +685,7 @@ const AzureBillingUpload: React.FC = () => {
           <AccountBalance sx={{ mr: 1, verticalAlign: 'middle' }} />
           账单数据详情
         </Typography>
-        
+
         {/* 汇总卡片 */}
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
           <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
@@ -924,10 +944,10 @@ const AzureBillingUpload: React.FC = () => {
                       <Typography variant="subtitle2" gutterBottom>
                         详细输出:
                       </Typography>
-                      <pre style={{ 
-                        fontSize: '12px', 
-                        whiteSpace: 'pre-wrap', 
-                        maxHeight: '300px', 
+                      <pre style={{
+                        fontSize: '12px',
+                        whiteSpace: 'pre-wrap',
+                        maxHeight: '300px',
                         overflow: 'auto',
                         margin: 0
                       }}>
@@ -966,7 +986,7 @@ const AzureBillingUpload: React.FC = () => {
                   value={filterStartDate}
                   onChange={(e) => setFilterStartDate(e.target.value)}
                   size="small"
-                  InputLabelProps={{ shrink: true }}
+                  slotProps={{ inputLabel: { shrink: true } }}
                 />
                 <TextField
                   label="结束日期"
@@ -974,7 +994,7 @@ const AzureBillingUpload: React.FC = () => {
                   value={filterEndDate}
                   onChange={(e) => setFilterEndDate(e.target.value)}
                   size="small"
-                  InputLabelProps={{ shrink: true }}
+                  slotProps={{ inputLabel: { shrink: true } }}
                 />
               </Box>
               <Box sx={{ display: 'flex', gap: 1 }}>
@@ -1133,7 +1153,7 @@ const AzureBillingUpload: React.FC = () => {
                   添加配置
                 </Button>
               </Box>
-              
+
               {configsError && (
                 <Alert severity="error" sx={{ mb: 2 }}>
                   {configsError}
@@ -1209,10 +1229,10 @@ const AzureBillingUpload: React.FC = () => {
                               {getStatusChip(config.status)}
                             </TableCell>
                             <TableCell>
-                              <Chip 
-                                label={config.autoQueryEnabled ? '启用' : '禁用'} 
-                                color={config.autoQueryEnabled ? 'success' : 'default'} 
-                                size="small" 
+                              <Chip
+                                label={config.autoQueryEnabled ? '启用' : '禁用'}
+                                color={config.autoQueryEnabled ? 'success' : 'default'}
+                                size="small"
                               />
                             </TableCell>
                             <TableCell>
@@ -1262,8 +1282,8 @@ const AzureBillingUpload: React.FC = () => {
           </Card>
 
           {/* 配置对话框 */}
-          <Dialog 
-            open={configDialogOpen} 
+          <Dialog
+            open={configDialogOpen}
             onClose={() => setConfigDialogOpen(false)}
             maxWidth="md"
             fullWidth
@@ -1367,7 +1387,7 @@ const AzureBillingUpload: React.FC = () => {
                   value={configForm.queryIntervalMinutes || 60}
                   onChange={(e) => setConfigForm({ ...configForm, queryIntervalMinutes: parseInt(e.target.value) || 60 })}
                   fullWidth
-                  inputProps={{ min: 1, max: 10080 }}
+                  slotProps={{ htmlInput: { min: 1, max: 10080 } }}
                 />
                 <FormControlLabel
                   control={

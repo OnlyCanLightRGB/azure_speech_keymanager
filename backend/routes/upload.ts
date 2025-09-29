@@ -34,17 +34,34 @@ const router = express.Router();
 
 // Multer配置
 const storage = multer.memoryStorage();
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB限制
   },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/json') {
-      cb(null, true);
-    } else {
-      cb(new Error('Only JSON files are allowed'));
+    // 增强的文件验证
+    const allowedMimeTypes = ['application/json', 'text/json'];
+    const allowedExtensions = ['.json'];
+
+    // 检查MIME类型
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      return cb(new Error('Only JSON files are allowed'));
     }
+
+    // 检查文件扩展名
+    const fileExtension = path.extname(file.originalname).toLowerCase();
+    if (!allowedExtensions.includes(fileExtension)) {
+      return cb(new Error('File must have .json extension'));
+    }
+
+    // 检查文件名安全性（防止路径遍历攻击）
+    const fileName = path.basename(file.originalname);
+    if (fileName !== file.originalname || fileName.includes('..') || fileName.includes('/') || fileName.includes('\\')) {
+      return cb(new Error('Invalid file name'));
+    }
+
+    cb(null, true);
   }
 });
 
@@ -71,10 +88,25 @@ export function createUploadRoutes(
       
       try {
         creationRequest = JSON.parse(fileContent);
+
+        // 验证JSON结构和内容安全性
+        if (!creationRequest || typeof creationRequest !== 'object') {
+          throw new Error('Invalid JSON structure');
+        }
+
+        // 检查是否包含潜在危险的属性
+        const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
+        const jsonString = JSON.stringify(creationRequest);
+        for (const key of dangerousKeys) {
+          if (jsonString.includes(key)) {
+            throw new Error('JSON contains potentially dangerous properties');
+          }
+        }
+
       } catch (parseError) {
         const response: AzureResourceCreationResponse = {
           success: false,
-          message: 'Invalid JSON format'
+          message: `Invalid JSON format: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`
         };
         return res.status(400).json(response);
       }

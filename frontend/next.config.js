@@ -10,20 +10,37 @@ const nextConfig = {
     // If NEXT_PUBLIC_API_URL is not set or empty, use relative path for production
     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
     if (!apiUrl) {
-      // In production with Docker, backend runs on port 3019 on the same container
-      // Use 127.0.0.1 instead of localhost to avoid IPv6 issues
-      return [
-        {
-          source: '/api/:path*',
-          destination: 'http://127.0.0.1:3019/api/:path*'
-        }
-      ];
+      // In Docker container, both frontend and backend run in the same container
+      // Frontend should proxy to backend via 127.0.0.1 on the backend port
+      const backendPort = process.env.BACKEND_PORT || process.env.PORT || '3019';
+      const isDocker = process.env.NODE_ENV === 'production' && process.env.DOCKER_ENV === 'true';
+
+      if (isDocker) {
+        // In Docker, use 127.0.0.1 to communicate within the same container
+        // Avoid IPv6 localhost (::1) issues by explicitly using IPv4
+        return [
+          {
+            source: '/api/:path*',
+            destination: `http://127.0.0.1:${backendPort}/api/:path*`
+          }
+        ];
+      } else {
+        // In development or non-Docker production, use 127.0.0.1
+        return [
+          {
+            source: '/api/:path*',
+            destination: `http://127.0.0.1:${backendPort}/api/:path*`
+          }
+        ];
+      }
     }
 
+    // Replace localhost with 127.0.0.1 to avoid IPv6 issues
+    const destination = apiUrl.replace('localhost', '127.0.0.1');
     return [
       {
         source: '/api/:path*',
-        destination: `${apiUrl}/api/:path*`
+        destination: `${destination}/api/:path*`
       }
     ];
   },

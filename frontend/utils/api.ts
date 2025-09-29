@@ -13,8 +13,35 @@ import {
   ResourceKeyCreationResponse
 } from '../types';
 
-// Use relative path if NEXT_PUBLIC_API_URL is not set (for production)
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+// Dynamic API URL detection for better Docker compatibility
+const getApiBaseUrl = (): string => {
+  // If NEXT_PUBLIC_API_URL is explicitly set, use it
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  // For client-side (browser), detect the current host and use backend port
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    // In Docker deployment, backend runs on port 3019
+    return `${protocol}//${hostname}:3019`;
+  }
+
+  // For server-side rendering, use empty string (relative path)
+  return '';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Debug logging for Docker deployment
+console.log('API Configuration:', {
+  NODE_ENV: process.env.NODE_ENV,
+  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+  API_BASE_URL,
+  isClient: typeof window !== 'undefined',
+  currentHost: typeof window !== 'undefined' ? window.location.host : 'server-side'
+});
 
 // Create axios instance
 const api = axios.create({
@@ -28,7 +55,7 @@ const api = axios.create({
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    console.log(`API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
@@ -44,7 +71,17 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('API Response Error:', error.response?.data || error.message);
+    const errorMessage = error.response?.data?.error || error.message || 'Network error';
+    const statusCode = error.response?.status || 0;
+
+    console.error(`API Response Error [${statusCode}]:`, errorMessage);
+
+    // For Docker deployment debugging
+    if (statusCode === 0 || error.code === 'ECONNREFUSED') {
+      console.error('Connection failed. Check if backend is running on the correct port.');
+      console.error('Current API Base URL:', API_BASE_URL);
+    }
+
     return Promise.reject(error);
   }
 );
@@ -480,13 +517,15 @@ export const scriptsApi = {
 
 // Billing APIs
 export const billingApi = {
-  // Get billing usage details
+  // Get billing usage
   getBillingUsage: async (subscriptionId: string, startDate?: string, endDate?: string): Promise<any> => {
-    const params: any = {};
-    if (startDate) params.startDate = startDate;
-    if (endDate) params.endDate = endDate;
-    
-    const response = await api.get<ApiResponse>(`/api/billing/usage/${subscriptionId}`, { params });
+    const response = await api.get<ApiResponse<any>>('/api/billing-azure/usage', {
+      params: {
+        subscriptionId,
+        startDate,
+        endDate
+      }
+    });
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to get billing usage');
     }
@@ -495,7 +534,9 @@ export const billingApi = {
 
   // Get account balance
   getAccountBalance: async (subscriptionId: string): Promise<any> => {
-    const response = await api.get<ApiResponse>(`/api/billing/balance/${subscriptionId}`);
+    const response = await api.get<ApiResponse<any>>('/api/billing-azure/balance', {
+      params: { subscriptionId }
+    });
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to get account balance');
     }
@@ -504,7 +545,9 @@ export const billingApi = {
 
   // Get usage statistics
   getUsageStatistics: async (subscriptionId: string): Promise<any> => {
-    const response = await api.get<ApiResponse>(`/api/billing/usage-statistics/${subscriptionId}`);
+    const response = await api.get<ApiResponse<any>>('/api/billing-azure/statistics', {
+      params: { subscriptionId }
+    });
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to get usage statistics');
     }
@@ -513,11 +556,55 @@ export const billingApi = {
 
   // Get cognitive services billing
   getCognitiveServicesBilling: async (subscriptionId: string): Promise<any> => {
-    const response = await api.get<ApiResponse>(`/api/billing/cognitive-services/${subscriptionId}`);
+    const response = await api.get<ApiResponse<any>>('/api/billing-azure/cognitive-services', {
+      params: { subscriptionId }
+    });
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to get cognitive services billing');
     }
     return response.data.data;
+  }
+};
+
+// Feishu Notification APIs
+export const notificationApi = {
+  // Get Feishu notification status
+  getFeishuStatus: async (): Promise<any> => {
+    const response = await api.get<ApiResponse<any>>('/api/notification/feishu/status');
+    if (!response.data.success) {
+      throw new Error(response.data.error || 'Failed to get Feishu status');
+    }
+    return response.data.data;
+  },
+
+  // Send test Feishu notification
+  sendTestNotification: async (): Promise<any> => {
+    const response = await api.post<ApiResponse<any>>('/api/notification/feishu/test');
+    if (!response.data.success) {
+      throw new Error(response.data.error || 'Failed to send test notification');
+    }
+    return response.data.data;
+  },
+
+  // Send custom Feishu notification
+  sendNotification: async (title: string, content: string): Promise<any> => {
+    const response = await api.post<ApiResponse<any>>('/api/notification/feishu/send', {
+      title,
+      content
+    });
+    if (!response.data.success) {
+      throw new Error(response.data.error || 'Failed to send notification');
+    }
+    return response.data.data;
+  },
+
+  // Send 401 error alert for a key
+  send401Alert: async (keyId: string, keyName: string, service: 'speech' | 'translation', region: string): Promise<any> => {
+    const timestamp = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const title = '🚨 Azure密钥401错误警报';
+    const content = `密钥ID: ${keyId}\n密钥名称: ${keyName}\n服务类型: ${service}\n区域: ${region}\n错误时间: ${timestamp}\n\n该密钥已被自动禁用，请检查密钥状态并及时更换。`;
+    
+    return await notificationApi.sendNotification(title, content);
   }
 };
 

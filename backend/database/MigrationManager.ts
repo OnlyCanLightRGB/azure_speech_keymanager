@@ -141,7 +141,13 @@ export class MigrationManager {
           try {
             await connection.execute(statement);
             console.log(`Statement ${i + 1} executed successfully`);
-          } catch (stmtError) {
+          } catch (stmtError: any) {
+            // 对于重复字段错误，记录警告但继续执行
+            if (stmtError.code === 'ER_DUP_FIELDNAME' || stmtError.errno === 1060) {
+              console.warn(`Warning: Column already exists in statement ${i + 1}, skipping...`);
+              console.warn(`Statement content: ${statement}`);
+              continue;
+            }
             console.error(`Error executing statement ${i + 1}:`, stmtError);
             console.error(`Statement content: ${statement}`);
             throw stmtError;
