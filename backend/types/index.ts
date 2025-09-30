@@ -9,6 +9,7 @@ export interface AzureKey {
   last_used?: Date;
   usage_count?: number;
   error_count?: number;
+  priority_weight?: number; // 权值：1=普通key，0=保底key
 }
 
 export enum KeyStatus {
@@ -67,6 +68,7 @@ export interface AddKeyRequest {
   key: string;
   region: string;
   keyname?: string;
+  priority_weight?: number; // 权值字段，可选
 }
 
 export interface TestKeyRequest {
@@ -130,6 +132,7 @@ export interface TranslationKey {
   last_used?: Date;
   usage_count?: number;
   error_count?: number;
+  priority_weight?: number; // 权值：1=普通key，0=保底key
 }
 
 export interface TranslationRequest {

@@ -107,7 +107,7 @@ export function createTranslationRoutes(
    */
   router.post('/keys', async (req, res) => {
     try {
-      const { key, region, keyname = '' } = req.body;
+      const { key, region, keyname = '', priority_weight = 1 } = req.body;
 
       if (!key || !region) {
         const response: ApiResponse = {
@@ -117,7 +117,7 @@ export function createTranslationRoutes(
         return res.status(400).json(response);
       }
 
-      const newKey = await translationKeyManager.addKey(key, region, keyname);
+      const newKey = await translationKeyManager.addKey(key, region, keyname, priority_weight);
 
       const response: ApiResponse = {
         success: true,
@@ -553,6 +553,32 @@ export function createTranslationRoutes(
         error: error.message
       };
       return res.status(500).json(response);
+    }
+  });
+
+  /**
+   * POST /api/translation/keys/:key/set-fallback - Set translation key as fallback key
+   */
+  router.post('/keys/:key/set-fallback', async (req, res) => {
+    try {
+      const { key } = req.params;
+      const { is_fallback = true } = req.body;
+
+      await translationKeyManager.setKeyPriorityWeight(key, is_fallback ? 0 : 1);
+
+      const response: ApiResponse = {
+        success: true,
+        message: `Translation key ${is_fallback ? 'set as fallback' : 'set as normal'} successfully`
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      logger.error('Error in POST /api/translation/keys/:key/set-fallback:', error);
+      const response: ApiResponse = {
+        success: false,
+        error: error.message
+      };
+      res.status(500).json(response);
     }
   });
 

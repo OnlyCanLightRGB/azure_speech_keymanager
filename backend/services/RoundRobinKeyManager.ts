@@ -35,11 +35,11 @@ export class RoundRobinKeyManager {
       try {
         await connection.beginTransaction();
 
-        // 获取所有可用的密钥
+        // 获取所有可用的密钥，按优先级排序
         const [rows] = await connection.execute<mysql.RowDataPacket[]>(
           `SELECT * FROM azure_keys
            WHERE status = ? AND region = ?
-           ORDER BY id ASC
+           ORDER BY priority_weight DESC, id ASC
            FOR UPDATE`,
           [KeyStatus.ENABLED, region]
         );
@@ -51,33 +51,49 @@ export class RoundRobinKeyManager {
         }
 
         const keys = rows as AzureKey[];
-        
-        // 过滤掉冷却中的密钥
-        const availableKeys: AzureKey[] = [];
+
+        // 分离普通key和保底key，并过滤掉冷却中的密钥
+        const normalKeys: AzureKey[] = [];
+        const fallbackKeys: AzureKey[] = [];
+
         for (const key of keys) {
           const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
           if (!isInCooldown) {
-            availableKeys.push(key);
+            if ((key.priority_weight || 1) > 0) {
+              normalKeys.push(key);
+            } else {
+              fallbackKeys.push(key);
+            }
           }
+        }
+
+        // 优先使用普通key，如果没有可用的普通key则使用保底key
+        let availableKeys = normalKeys;
+        let keyType = 'normal';
+
+        if (normalKeys.length === 0 && fallbackKeys.length > 0) {
+          availableKeys = fallbackKeys;
+          keyType = 'fallback';
+          logger.warn(`All normal keys for region ${region} are in cooldown, using fallback keys`);
         }
 
         if (availableKeys.length === 0) {
           await connection.rollback();
-          logger.warn(`All available keys for region ${region} are in cooldown`);
+          logger.warn(`All available keys (including fallback keys) for region ${region} are in cooldown`);
           return null;
         }
 
-        // 获取当前轮询索引
-        const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}${region}`;
+        // 获取当前轮询索引，为不同类型的key使用不同的索引
+        const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}speech_${keyType}_${region}`;
         let currentIndex = 0;
-        
+
         try {
           const indexStr = await this.redis.get(roundRobinKey);
           if (indexStr) {
             currentIndex = parseInt(indexStr, 10) || 0;
           }
         } catch (error) {
-          logger.debug(`Error getting round robin index for region ${region}:`, error);
+          logger.debug(`Error getting round robin index for ${keyType} keys in region ${region}:`, error);
         }
 
         // 确保索引在有效范围内
@@ -91,7 +107,7 @@ export class RoundRobinKeyManager {
         try {
           await this.redis.set(roundRobinKey, nextIndex.toString(), 'EX', 3600); // 1小时过期
         } catch (error) {
-          logger.debug(`Error setting round robin index for region ${region}:`, error);
+          logger.debug(`Error setting round robin index for ${keyType} keys in region ${region}:`, error);
         }
 
         // 更新使用统计
@@ -104,7 +120,7 @@ export class RoundRobinKeyManager {
 
         await connection.commit();
 
-        logger.info(`Round-robin key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+        logger.info(`Round-robin ${keyType} key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (priority_weight: ${selectedKey.priority_weight || 1}, index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
         return selectedKey;
 
       } catch (error) {

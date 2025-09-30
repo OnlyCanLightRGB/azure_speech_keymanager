@@ -26,7 +26,7 @@ import { createConfigRoutes } from './routes/config';
 import { createAzureCLIRoutes } from './routes/azure-cli';
 import { createBillingRoutes } from './routes/billing';
 import { billingAzureRouter, setAutoBillingService } from './routes/billing-azure';
-import { createNotificationRoutes } from './routes/notification';
+
 import scriptsRouter from './routes/scripts';
 import logger from './utils/logger';
 import { DatabaseConfig, ApiResponse } from './types';
@@ -144,10 +144,10 @@ class Server {
     this.app.use('/api/keys', createKeyRoutes(this.keyManager, this.ttsService, this.sttService));
     this.app.use('/api/translation', createTranslationRoutes(this.translationKeyManager, this.translationService, this.speechTranslationService));
     this.app.use('/api/upload', createUploadRoutes(this.keyManager, this.translationKeyManager, this.billingService, this.schedulerService));
-    this.app.use('/api/config', createConfigRoutes(this.database.getPool(), this.keyManager, this.translationKeyManager));
+    this.app.use('/api/config', createConfigRoutes(this.database.getPool()));
     this.app.use('/api/azure-cli', createAzureCLIRoutes(this.azureCLIService, this.enhancedConfigService));
     this.app.use('/api/billing', createBillingRoutes(this.billingService, this.schedulerService));
-    this.app.use('/api/notification', createNotificationRoutes(this.database.getPool()));
+
     
     // 添加调试日志
     console.log('Registering billing-azure router...');

@@ -47,6 +47,7 @@ import {
   SelectAll as SelectAllIcon,
   BugReport as ScriptIcon,
   CleaningServices as CleanupIcon,
+  Security as FallbackIcon,
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
 import { translationApi, scriptsApi } from '../utils/api';
@@ -72,7 +73,7 @@ const TranslationPage: React.FC = () => {
   const [scriptResult, setScriptResult] = useState<any>(null);
 
   // Form states
-  const [addFormData, setAddFormData] = useState<AddKeyForm>({ key: '', region: '', keyname: '' });
+  const [addFormData, setAddFormData] = useState<AddKeyForm>({ key: '', region: '', keyname: '', priority_weight: 1 });
   const [testFormData, setTestFormData] = useState<TestKeyForm>({ key: '', region: '' });
   const [editFormData, setEditFormData] = useState<EditKeyForm>({ keyname: '', region: '' });
 
@@ -106,6 +107,17 @@ const TranslationPage: React.FC = () => {
       loadKeys();
     } catch (error: any) {
       showSnackbar(`添加翻译密钥失败: ${error.message}`, 'error');
+    }
+  };
+
+  const handleToggleFallback = async (key: TranslationKey) => {
+    try {
+      const newIsFallback = key.priority_weight !== 0;
+      await translationApi.setFallback(key.key, newIsFallback);
+      showSnackbar(`翻译密钥已${newIsFallback ? '设为保底' : '设为普通'}密钥`);
+      loadKeys();
+    } catch (error: any) {
+      showSnackbar(`切换翻译密钥类型失败: ${error.message}`, 'error');
     }
   };
 
@@ -485,6 +497,7 @@ const TranslationPage: React.FC = () => {
                   <TableCell>密钥名称</TableCell>
                   <TableCell>密钥</TableCell>
                   <TableCell>区域</TableCell>
+                  <TableCell>类型</TableCell>
                   <TableCell>状态</TableCell>
                   <TableCell>使用次数</TableCell>
                   <TableCell>错误次数</TableCell>
@@ -519,12 +532,19 @@ const TranslationPage: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         <SafeChip
+                          label={(key.priority_weight === 0) ? '保底' : '普通'}
+                          size="small"
+                          color={(key.priority_weight === 0) ? 'warning' : 'info'}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <SafeChip
                           label={key.status.toUpperCase()}
                           size="small"
                           color={
-                            key.status === 'enabled' ? 'success' : 
-                            key.status === 'disabled' ? 'error' : 
-                            key.status === 'cooldown' ? 'warning' : 
+                            key.status === 'enabled' ? 'success' :
+                            key.status === 'disabled' ? 'error' :
+                            key.status === 'cooldown' ? 'warning' :
                             'default'
                           }
                         />
@@ -581,6 +601,15 @@ const TranslationPage: React.FC = () => {
                               </IconButton>
                             </Tooltip>
                           )}
+                          <Tooltip title={key.priority_weight === 0 ? "设为普通密钥" : "设为保底密钥"}>
+                            <IconButton
+                              size="small"
+                              color={key.priority_weight === 0 ? "warning" : "default"}
+                              onClick={() => handleToggleFallback(key)}
+                            >
+                              <FallbackIcon />
+                            </IconButton>
+                          </Tooltip>
                           <Tooltip title="删除密钥">
                             <IconButton
                               size="small"
@@ -645,6 +674,18 @@ const TranslationPage: React.FC = () => {
                   ))}
                 </Select>
               </FormControl>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Checkbox
+                  checked={addFormData.priority_weight === 0}
+                  onChange={(e) => setAddFormData({
+                    ...addFormData,
+                    priority_weight: e.target.checked ? 0 : 1
+                  })}
+                />
+                <Typography variant="body2" sx={{ ml: 1 }}>
+                  设置为保底密钥（仅在所有普通密钥冷却时使用）
+                </Typography>
+              </Box>
             </Box>
           </DialogContent>
           <DialogActions>

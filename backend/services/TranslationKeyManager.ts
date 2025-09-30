@@ -48,6 +48,91 @@ export class TranslationKeyManager {
   }
 
   /**
+   * Select key with priority-based strategy (normal keys first, then fallback keys)
+   */
+  private async selectKeyWithPriority(normalKeys: TranslationKey[], fallbackKeys: TranslationKey[], region: string, currentActiveKey?: string | null): Promise<TranslationKey | null> {
+    // First try normal keys
+    const selectedNormalKey = await this.selectKeyFromPool(normalKeys, region, currentActiveKey, 'normal');
+    if (selectedNormalKey) {
+      return selectedNormalKey;
+    }
+
+    // If no normal keys available, try fallback keys
+    if (fallbackKeys.length > 0) {
+      logger.warn(`All normal translation keys for region ${region} are in cooldown, trying fallback keys`);
+      const selectedFallbackKey = await this.selectKeyFromPool(fallbackKeys, region, currentActiveKey, 'fallback');
+      if (selectedFallbackKey) {
+        logger.info(`Using fallback translation key: ${this.maskKey(selectedFallbackKey.key)} (priority_weight: ${selectedFallbackKey.priority_weight || 0})`);
+        return selectedFallbackKey;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Select key from a specific pool using sticky strategy
+   */
+  private async selectKeyFromPool(keys: TranslationKey[], region: string, currentActiveKey?: string | null, keyType: 'normal' | 'fallback' = 'normal'): Promise<TranslationKey | null> {
+    if (keys.length === 0) return null;
+
+    // If there's a current active key in this pool and it's not in cooldown, continue using it
+    if (currentActiveKey) {
+      const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
+      if (activeKeyInfo) {
+        const isInCooldown = await this.cooldownManager.isKeyInCooldown(currentActiveKey);
+        if (!isInCooldown) {
+          logger.info(`Continuing with active ${keyType} translation key: ${this.maskKey(currentActiveKey)} (usage: ${activeKeyInfo.usage_count})`);
+          return activeKeyInfo;
+        }
+      }
+    }
+
+    // Find next available key in sequence
+    let currentActiveKeyId = 0;
+    if (currentActiveKey) {
+      const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
+      if (activeKeyInfo && activeKeyInfo.id) {
+        currentActiveKeyId = activeKeyInfo.id;
+      }
+    }
+
+    // Try to find the next key in sequence (higher ID) that's not in cooldown
+    for (const key of keys) {
+      if (key.id && key.id > currentActiveKeyId) {
+        const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+        if (!isInCooldown) {
+          await this.cooldownManager.setActiveKey(region, key.key);
+          logger.info(`Selected next sequential ${keyType} translation key: ${this.maskKey(key.key)} (ID: ${key.id})`);
+          return key;
+        }
+      }
+    }
+
+    // If no higher ID key is available, wrap around to the beginning
+    for (const key of keys) {
+      const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+      if (!isInCooldown && (!currentActiveKey || key.key !== currentActiveKey)) {
+        await this.cooldownManager.setActiveKey(region, key.key);
+        logger.info(`Selected wrapped-around ${keyType} translation key: ${this.maskKey(key.key)} (ID: ${key.id || 'unknown'})`);
+        return key;
+      }
+    }
+
+    // Final fallback: if all keys are in cooldown except the recently cooled one
+    if (currentActiveKey) {
+      const fallbackKey = keys.find(k => k.key === currentActiveKey);
+      if (fallbackKey && !(await this.cooldownManager.isKeyInCooldown(fallbackKey.key))) {
+        await this.cooldownManager.setActiveKey(region, fallbackKey.key);
+        logger.info(`Using recently cooled ${keyType} translation key as final fallback: ${this.maskKey(fallbackKey.key)}`);
+        return fallbackKey;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Get an available key for the specified region
    */
   async getKey(region: string = 'eastasia', tag: string = ''): Promise<TranslationKey | null> {
@@ -72,12 +157,13 @@ export class TranslationKeyManager {
       try {
         await connection.beginTransaction();
 
-        // Find available keys with sequential rotation strategy
-        // Priority: 1. Not in cooldown 2. Sequential ID order for proper rotation
+        // Find available keys with priority-based selection
+        // Priority: 1. Normal keys (priority_weight > 0) 2. Fallback keys (priority_weight = 0)
+        // Within each priority level: Sequential ID order for proper rotation
         const [rows] = await connection.execute<mysql.RowDataPacket[]>(
           `SELECT * FROM translation_keys
            WHERE status = ? AND region = ?
-           ORDER BY id ASC
+           ORDER BY priority_weight DESC, id ASC
            FOR UPDATE`,
           [KeyStatus.ENABLED, region]
         );
@@ -88,108 +174,24 @@ export class TranslationKeyManager {
           return null;
         }
 
-        // Implement sticky key selection strategy (same as speech keys)
+        // Implement sticky key selection strategy with fallback key support
         let selectedKey: TranslationKey | null = null;
         const keys = rows as TranslationKey[];
-        
-        // First, check if there's a current active key for this region
+
+        // Separate normal keys and fallback keys
+        const normalKeys = keys.filter(k => (k.priority_weight || 1) > 0);
+        const fallbackKeys = keys.filter(k => (k.priority_weight || 1) === 0);
+
+        // Get current active key for this region
         const currentActiveKey = await this.cooldownManager.getActiveKey(region);
-        
-        if (currentActiveKey) {
-          // Find the current active key in available keys
-          const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
-          
-          if (activeKeyInfo) {
-            // Check if the current active key is still available (not in cooldown)
-            const isInCooldown = await this.cooldownManager.isKeyInCooldown(currentActiveKey);
-            
-            if (!isInCooldown) {
-              // Continue using the current active key
-              selectedKey = activeKeyInfo;
-              logger.info(`Continuing with active key: ${this.maskKey(currentActiveKey)} (usage: ${activeKeyInfo.usage_count}, sticky selection)`);
-            } else {
-              // Current active key is in cooldown, clear it and find a new one
-              await this.cooldownManager.clearActiveKey(region);
-              logger.info(`Active key ${this.maskKey(currentActiveKey)} is in cooldown, switching to next available key`);
-            }
-          } else {
-            // Active key is not in the available keys list, clear it
-            await this.cooldownManager.clearActiveKey(region);
-            logger.info(`Active key ${this.maskKey(currentActiveKey)} not found in available keys, clearing`);
-          }
-        }
-        
-        // If no active key or active key is in cooldown, find the next available key using sequential rotation
-        if (!selectedKey) {
-          if (currentActiveKey) {
-            // If there was an active key, use sequential rotation
-            let currentActiveKeyId = 0;
-            const activeKeyInfo = keys.find(k => k.key === currentActiveKey);
-            if (activeKeyInfo && activeKeyInfo.id) {
-              currentActiveKeyId = activeKeyInfo.id;
-            }
-            
-            // First, try to find the next key in sequence (higher ID) that's not in cooldown
-            for (const key of keys) {
-              if (key.id && key.id > currentActiveKeyId) {
-                const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
-                if (!isInCooldown) {
-                  selectedKey = key;
-                  await this.cooldownManager.setActiveKey(region, key.key);
-                  logger.info(`Selected next sequential key: ${this.maskKey(key.key)} (ID: ${key.id}, sequential rotation)`);
-                  break;
-                } else {
-                  logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id}) - in cooldown`);
-                }
-              }
-            }
-          } else {
-            // No active key exists, select the first available key to avoid conflicts
-            for (const key of keys) {
-              const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
-              if (!isInCooldown) {
-                selectedKey = key;
-                await this.cooldownManager.setActiveKey(region, key.key);
-                logger.info(`Selected first available key: ${this.maskKey(key.key)} (ID: ${key.id}, initial selection)`);
-                break;
-              } else {
-                logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id}) - in cooldown`);
-              }
-            }
-          }
-          
-          // If still no key selected and there was an active key, wrap around to the beginning (but skip recently cooled keys)
-          if (!selectedKey && currentActiveKey) {
-            for (const key of keys) {
-              const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
-              if (!isInCooldown) {
-                // Only use this key if it's not the one that just went into cooldown
-                if (!currentActiveKey || key.key !== currentActiveKey) {
-                  selectedKey = key;
-                  await this.cooldownManager.setActiveKey(region, key.key);
-                  logger.info(`Selected wrapped-around key: ${this.maskKey(key.key)} (ID: ${key.id || 'unknown'}, wrap-around rotation)`);
-                   break;
-                 }
-               } else {
-                 logger.debug(`Skipping key ${this.maskKey(key.key)} (ID: ${key.id || 'unknown'}) - in cooldown`);
-               }
-             }
-           }
-          
-          // Final fallback: if all keys are in cooldown except the recently cooled one
-          if (!selectedKey && currentActiveKey) {
-            const fallbackKey = keys.find(k => k.key === currentActiveKey);
-            if (fallbackKey && !(await this.cooldownManager.isKeyInCooldown(fallbackKey.key))) {
-              selectedKey = fallbackKey;
-              await this.cooldownManager.setActiveKey(region, fallbackKey.key);
-              logger.info(`Using recently cooled key as final fallback: ${this.maskKey(fallbackKey.key)} (ID: ${fallbackKey.id || 'unknown'}, no other keys available)`);
-            }
-          }
-        }
+
+        // Use priority-based key selection
+        selectedKey = await this.selectKeyWithPriority(normalKeys, fallbackKeys, region, currentActiveKey);
+
 
         if (!selectedKey) {
           await connection.rollback();
-          logger.warn(`All available keys for region ${region} are in cooldown`);
+          logger.warn(`All available translation keys (including fallback keys) for region ${region} are in cooldown`);
           return null;
         }
 
@@ -206,7 +208,8 @@ export class TranslationKeyManager {
 
         await connection.commit();
 
-        logger.info(`Key retrieved: ${this.maskKey(selectedKey.key)} for region: ${region} (usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+        const keyType = (selectedKey.priority_weight || 1) === 0 ? 'fallback' : 'normal';
+        logger.info(`${keyType.charAt(0).toUpperCase() + keyType.slice(1)} translation key retrieved: ${this.maskKey(selectedKey.key)} for region: ${region} (priority_weight: ${selectedKey.priority_weight || 1}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
         return selectedKey;
 
       } catch (error) {
@@ -231,11 +234,11 @@ export class TranslationKeyManager {
       try {
         await connection.beginTransaction();
 
-        // 获取所有可用的翻译密钥
+        // 获取所有可用的翻译密钥，按优先级排序
         const [rows] = await connection.execute<mysql.RowDataPacket[]>(
           `SELECT * FROM translation_keys
            WHERE status = ? AND region = ?
-           ORDER BY id ASC
+           ORDER BY priority_weight DESC, id ASC
            FOR UPDATE`,
           [KeyStatus.ENABLED, region]
         );
@@ -247,33 +250,49 @@ export class TranslationKeyManager {
         }
 
         const keys = rows as TranslationKey[];
-        
-        // 过滤掉冷却中的密钥
-        const availableKeys: TranslationKey[] = [];
+
+        // 分离普通key和保底key，并过滤掉冷却中的密钥
+        const normalKeys: TranslationKey[] = [];
+        const fallbackKeys: TranslationKey[] = [];
+
         for (const key of keys) {
           const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
           if (!isInCooldown) {
-            availableKeys.push(key);
+            if ((key.priority_weight || 1) > 0) {
+              normalKeys.push(key);
+            } else {
+              fallbackKeys.push(key);
+            }
           }
+        }
+
+        // 优先使用普通key，如果没有可用的普通key则使用保底key
+        let availableKeys = normalKeys;
+        let keyType = 'normal';
+
+        if (normalKeys.length === 0 && fallbackKeys.length > 0) {
+          availableKeys = fallbackKeys;
+          keyType = 'fallback';
+          logger.warn(`All normal translation keys for region ${region} are in cooldown, using fallback keys`);
         }
 
         if (availableKeys.length === 0) {
           await connection.rollback();
-          logger.warn(`All available translation keys for region ${region} are in cooldown`);
+          logger.warn(`All available translation keys (including fallback keys) for region ${region} are in cooldown`);
           return null;
         }
 
-        // 获取当前轮询索引
-        const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}${region}`;
+        // 获取当前轮询索引，为不同类型的key使用不同的索引
+        const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}translation_${keyType}_${region}`;
         let currentIndex = 0;
-        
+
         try {
           const indexStr = await this.redis.get(roundRobinKey);
           if (indexStr) {
             currentIndex = parseInt(indexStr, 10) || 0;
           }
         } catch (error) {
-          logger.debug(`Error getting round robin index for region ${region}:`, error);
+          logger.debug(`Error getting round robin index for ${keyType} translation keys in region ${region}:`, error);
         }
 
         // 确保索引在有效范围内
@@ -287,7 +306,7 @@ export class TranslationKeyManager {
         try {
           await this.redis.set(roundRobinKey, nextIndex.toString(), 'EX', 3600); // 1小时过期
         } catch (error) {
-          logger.debug(`Error setting round robin index for region ${region}:`, error);
+          logger.debug(`Error setting round robin index for ${keyType} translation keys in region ${region}:`, error);
         }
 
         // 更新使用统计
@@ -303,7 +322,7 @@ export class TranslationKeyManager {
 
         await connection.commit();
 
-        logger.info(`Round-robin translation key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+        logger.info(`Round-robin ${keyType} translation key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (priority_weight: ${selectedKey.priority_weight || 1}, index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
         return selectedKey;
 
       } catch (error) {
@@ -481,7 +500,7 @@ export class TranslationKeyManager {
   /**
    * Add a new translation key
    */
-  async addKey(key: string, region: string, keyname: string = ''): Promise<TranslationKey> {
+  async addKey(key: string, region: string, keyname: string = '', priority_weight: number = 1): Promise<TranslationKey> {
     const connection = await this.db.getConnection();
 
     try {
@@ -499,8 +518,8 @@ export class TranslationKeyManager {
 
       // Insert new key
       const [result] = await connection.execute<mysql.ResultSetHeader>(
-        'INSERT INTO translation_keys (`key`, region, keyname, status) VALUES (?, ?, ?, ?)',
-        [key, region, keyname || `TranslationKey-${Date.now()}`, KeyStatus.ENABLED]
+        'INSERT INTO translation_keys (`key`, region, keyname, status, priority_weight) VALUES (?, ?, ?, ?, ?)',
+        [key, region, keyname || `TranslationKey-${Date.now()}`, KeyStatus.ENABLED, priority_weight]
       );
 
       const newKey: TranslationKey = {
@@ -508,20 +527,63 @@ export class TranslationKeyManager {
         key,
         region,
         keyname: keyname || `TranslationKey-${Date.now()}`,
-        status: KeyStatus.ENABLED
+        status: KeyStatus.ENABLED,
+        priority_weight
       };
 
       // Log the action
-      await this.logAction(connection, newKey.id!, LogAction.ADD_KEY, 200, `Added translation key for region: ${region}`);
+      await this.logAction(connection, newKey.id!, LogAction.ADD_KEY, 200, `Added translation key for region: ${region}, priority_weight: ${priority_weight}`);
 
       await connection.commit();
-      
-      logger.info(`Translation key added: ${this.maskKey(key)} for region: ${region}`);
+
+      const keyType = priority_weight === 0 ? 'fallback' : 'normal';
+      logger.info(`${keyType.charAt(0).toUpperCase() + keyType.slice(1)} translation key added: ${this.maskKey(key)} for region: ${region} (priority_weight: ${priority_weight})`);
       return newKey;
 
     } catch (error) {
       await connection.rollback();
       logger.error('Error adding translation key:', error);
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * Set translation key priority weight (0 = fallback, 1+ = normal)
+   */
+  async setKeyPriorityWeight(key: string, priority_weight: number): Promise<void> {
+    const connection = await this.db.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      // Check if key exists
+      const [existing] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT id FROM translation_keys WHERE `key` = ?',
+        [key]
+      );
+
+      if (existing.length === 0) {
+        throw new Error(`Translation key not found: ${this.maskKey(key)}`);
+      }
+
+      // Update priority weight
+      await connection.execute(
+        'UPDATE translation_keys SET priority_weight = ? WHERE `key` = ?',
+        [priority_weight, key]
+      );
+
+      // Log the action
+      const keyType = priority_weight === 0 ? 'fallback' : 'normal';
+      await this.logAction(connection, existing[0].id, LogAction.SET_STATUS, 200, `Set translation key as ${keyType} (priority_weight: ${priority_weight})`);
+
+      await connection.commit();
+
+      logger.info(`Translation key ${this.maskKey(key)} set as ${keyType} (priority_weight: ${priority_weight})`);
+    } catch (error) {
+      await connection.rollback();
+      logger.error('Error setting translation key priority weight:', error);
       throw error;
     } finally {
       connection.release();

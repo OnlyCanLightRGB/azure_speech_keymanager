@@ -141,6 +141,16 @@ export const keyApi = {
     }
   },
 
+  // Set key as fallback or normal
+  setFallback: async (key: string, isFallback: boolean): Promise<void> => {
+    const response = await api.post<ApiResponse>(`/api/keys/${encodeURIComponent(key)}/set-fallback`, {
+      is_fallback: isFallback
+    });
+    if (!response.data.success) {
+      throw new Error(response.data.error || 'Failed to set key fallback status');
+    }
+  },
+
   // Update a key
   updateKey: async (key: string, keyname: string, region: string): Promise<AzureKey> => {
     const response = await api.put<ApiResponse<AzureKey>>(`/api/keys/${encodeURIComponent(key)}`, {
@@ -303,6 +313,16 @@ export const translationApi = {
     const response = await api.post<ApiResponse>(`/api/translation/keys/${encodeURIComponent(key)}/enable`);
     if (!response.data.success) {
       throw new Error(response.data.error || 'Failed to enable translation key');
+    }
+  },
+
+  // Set translation key as fallback or normal
+  setFallback: async (key: string, isFallback: boolean): Promise<void> => {
+    const response = await api.post<ApiResponse>(`/api/translation/keys/${encodeURIComponent(key)}/set-fallback`, {
+      is_fallback: isFallback
+    });
+    if (!response.data.success) {
+      throw new Error(response.data.error || 'Failed to set translation key fallback status');
     }
   },
 

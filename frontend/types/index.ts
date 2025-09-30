@@ -9,6 +9,7 @@ export interface AzureKey {
   last_used?: string;
   usage_count?: number;
   error_count?: number;
+  priority_weight?: number; // 权值：1=普通key，0=保底key
 }
 
 export interface TranslationKey {
@@ -23,6 +24,7 @@ export interface TranslationKey {
   usage_count?: number;
   error_count?: number;
   endpoint?: string;
+  priority_weight?: number; // 权值：1=普通key，0=保底key
 }
 
 export enum KeyStatus {
@@ -107,6 +109,7 @@ export interface AddKeyForm {
   key: string;
   region: string;
   keyname: string;
+  priority_weight?: number; // 可选的权值字段
 }
 
 export interface TestKeyForm {
@@ -117,6 +120,7 @@ export interface TestKeyForm {
 export interface EditKeyForm {
   keyname: string;
   region: string;
+  priority_weight?: number; // 可选的权值字段
 }
 
 export interface ConfigForm {

@@ -85,7 +85,7 @@ export function createKeyRoutes(keyManager: KeyManager, ttsService: AzureTTSServ
    */
   router.post('/', async (req, res) => {
     try {
-      const { key, region, keyname = '' } = req.body as AddKeyRequest;
+      const { key, region, keyname = '', priority_weight = 1 } = req.body as AddKeyRequest;
 
       if (!key || !region) {
         const response: ApiResponse = {
@@ -95,7 +95,7 @@ export function createKeyRoutes(keyManager: KeyManager, ttsService: AzureTTSServ
         return res.status(400).json(response);
       }
 
-      const newKey = await keyManager.addKey(key, region, keyname);
+      const newKey = await keyManager.addKey(key, region, keyname, priority_weight);
 
       const response: ApiResponse = {
         success: true,
@@ -461,6 +461,32 @@ export function createKeyRoutes(keyManager: KeyManager, ttsService: AzureTTSServ
         error: error.message
       };
       return res.status(500).json(response);
+    }
+  });
+
+  /**
+   * POST /api/keys/:key/set-fallback - Set key as fallback key
+   */
+  router.post('/:key/set-fallback', async (req, res) => {
+    try {
+      const { key } = req.params;
+      const { is_fallback = true } = req.body;
+
+      await keyManager.setKeyPriorityWeight(key, is_fallback ? 0 : 1);
+
+      const response: ApiResponse = {
+        success: true,
+        message: `Key ${is_fallback ? 'set as fallback' : 'set as normal'} successfully`
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      logger.error('Error in POST /api/keys/:key/set-fallback:', error);
+      const response: ApiResponse = {
+        success: false,
+        error: error.message
+      };
+      res.status(500).json(response);
     }
   });
 
