@@ -35,93 +35,143 @@ export class RoundRobinKeyManager {
       try {
         await connection.beginTransaction();
 
-        // 获取所有可用的密钥，按优先级排序
-        const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+        // 首先尝试获取普通密钥（priority_weight > 0）
+        const [normalRows] = await connection.execute<mysql.RowDataPacket[]>(
           `SELECT * FROM azure_keys
-           WHERE status = ? AND region = ?
-           ORDER BY priority_weight DESC, id ASC
+           WHERE status = ? AND region = ? AND (priority_weight IS NULL OR priority_weight > 0)
+           ORDER BY id ASC
            FOR UPDATE`,
           [KeyStatus.ENABLED, region]
         );
 
-        if (rows.length === 0) {
-          await connection.rollback();
-          logger.warn(`No available keys found for region: ${region}`);
-          return null;
-        }
-
-        const keys = rows as AzureKey[];
-
-        // 分离普通key和保底key，并过滤掉冷却中的密钥
         const normalKeys: AzureKey[] = [];
-        const fallbackKeys: AzureKey[] = [];
+        const allNormalKeys = normalRows as AzureKey[];
 
-        for (const key of keys) {
+        // 过滤掉冷却中的普通密钥
+        for (const key of allNormalKeys) {
           const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
           if (!isInCooldown) {
-            if ((key.priority_weight || 1) > 0) {
-              normalKeys.push(key);
-            } else {
-              fallbackKeys.push(key);
+            normalKeys.push(key);
+          }
+        }
+
+        // 如果有可用的普通密钥，使用普通密钥轮询
+        if (normalKeys.length > 0) {
+          const availableKeys = normalKeys;
+          const keyType = 'normal';
+
+          // 获取当前轮询索引
+          const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}speech_${keyType}_${region}`;
+          let currentIndex = 0;
+
+          try {
+            const indexStr = await this.redis.get(roundRobinKey);
+            if (indexStr) {
+              currentIndex = parseInt(indexStr, 10) || 0;
             }
+          } catch (error) {
+            logger.debug(`Error getting round robin index for ${keyType} keys in region ${region}:`, error);
           }
-        }
 
-        // 优先使用普通key，如果没有可用的普通key则使用保底key
-        let availableKeys = normalKeys;
-        let keyType = 'normal';
+          // 确保索引在有效范围内
+          currentIndex = currentIndex % availableKeys.length;
 
-        if (normalKeys.length === 0 && fallbackKeys.length > 0) {
-          availableKeys = fallbackKeys;
-          keyType = 'fallback';
-          logger.warn(`All normal keys for region ${region} are in cooldown, using fallback keys`);
-        }
+          // 选择当前索引对应的密钥
+          const selectedKey = availableKeys[currentIndex];
 
-        if (availableKeys.length === 0) {
-          await connection.rollback();
-          logger.warn(`All available keys (including fallback keys) for region ${region} are in cooldown`);
-          return null;
-        }
-
-        // 获取当前轮询索引，为不同类型的key使用不同的索引
-        const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}speech_${keyType}_${region}`;
-        let currentIndex = 0;
-
-        try {
-          const indexStr = await this.redis.get(roundRobinKey);
-          if (indexStr) {
-            currentIndex = parseInt(indexStr, 10) || 0;
+          // 更新轮询索引到下一个位置
+          const nextIndex = (currentIndex + 1) % availableKeys.length;
+          try {
+            await this.redis.set(roundRobinKey, nextIndex.toString(), 'EX', 3600); // 1小时过期
+          } catch (error) {
+            logger.debug(`Error setting round robin index for ${keyType} keys in region ${region}:`, error);
           }
-        } catch (error) {
-          logger.debug(`Error getting round robin index for ${keyType} keys in region ${region}:`, error);
+
+          // 更新使用统计
+          await connection.execute(
+            `UPDATE azure_keys
+             SET usage_count = usage_count + 1, last_used = NOW()
+             WHERE id = ?`,
+            [selectedKey.id]
+          );
+
+          await connection.commit();
+
+          logger.info(`Round-robin ${keyType} key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (priority_weight: ${selectedKey.priority_weight || 1}, index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+          return selectedKey;
         }
 
-        // 确保索引在有效范围内
-        currentIndex = currentIndex % availableKeys.length;
-        
-        // 选择当前索引对应的密钥
-        const selectedKey = availableKeys[currentIndex];
-        
-        // 更新轮询索引到下一个位置
-        const nextIndex = (currentIndex + 1) % availableKeys.length;
-        try {
-          await this.redis.set(roundRobinKey, nextIndex.toString(), 'EX', 3600); // 1小时过期
-        } catch (error) {
-          logger.debug(`Error setting round robin index for ${keyType} keys in region ${region}:`, error);
-        }
+        // 如果没有可用的普通密钥，尝试保底密钥
+        logger.warn(`All normal keys for region ${region} are in cooldown, trying fallback keys`);
 
-        // 更新使用统计
-        await connection.execute(
-          `UPDATE azure_keys
-           SET usage_count = usage_count + 1, last_used = NOW()
-           WHERE id = ?`,
-          [selectedKey.id]
+        const [fallbackRows] = await connection.execute<mysql.RowDataPacket[]>(
+          `SELECT * FROM azure_keys
+           WHERE status = ? AND region = ? AND priority_weight = 0
+           ORDER BY id ASC
+           FOR UPDATE`,
+          [KeyStatus.ENABLED, region]
         );
 
-        await connection.commit();
+        const fallbackKeys: AzureKey[] = [];
+        const allFallbackKeys = fallbackRows as AzureKey[];
 
-        logger.info(`Round-robin ${keyType} key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (priority_weight: ${selectedKey.priority_weight || 1}, index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
-        return selectedKey;
+        // 过滤掉冷却中的保底密钥
+        for (const key of allFallbackKeys) {
+          const isInCooldown = await this.cooldownManager.isKeyInCooldown(key.key);
+          if (!isInCooldown) {
+            fallbackKeys.push(key);
+          }
+        }
+
+        if (fallbackKeys.length > 0) {
+          const availableKeys = fallbackKeys;
+          const keyType = 'fallback';
+
+          // 获取当前轮询索引
+          const roundRobinKey = `${this.ROUND_ROBIN_PREFIX}speech_${keyType}_${region}`;
+          let currentIndex = 0;
+
+          try {
+            const indexStr = await this.redis.get(roundRobinKey);
+            if (indexStr) {
+              currentIndex = parseInt(indexStr, 10) || 0;
+            }
+          } catch (error) {
+            logger.debug(`Error getting round robin index for ${keyType} keys in region ${region}:`, error);
+          }
+
+          // 确保索引在有效范围内
+          currentIndex = currentIndex % availableKeys.length;
+
+          // 选择当前索引对应的密钥
+          const selectedKey = availableKeys[currentIndex];
+
+          // 更新轮询索引到下一个位置
+          const nextIndex = (currentIndex + 1) % availableKeys.length;
+          try {
+            await this.redis.set(roundRobinKey, nextIndex.toString(), 'EX', 3600); // 1小时过期
+          } catch (error) {
+            logger.debug(`Error setting round robin index for ${keyType} keys in region ${region}:`, error);
+          }
+
+          // 更新使用统计
+          await connection.execute(
+            `UPDATE azure_keys
+             SET usage_count = usage_count + 1, last_used = NOW()
+             WHERE id = ?`,
+            [selectedKey.id]
+          );
+
+          await connection.commit();
+
+          logger.info(`Round-robin ${keyType} key selected: ${this.maskKey(selectedKey.key)} for region: ${region} (priority_weight: ${selectedKey.priority_weight || 0}, index: ${currentIndex}/${availableKeys.length}, usage_count: ${(selectedKey.usage_count || 0) + 1})`);
+          return selectedKey;
+        }
+
+        // 如果所有密钥（包括保底密钥）都在冷却中
+        await connection.rollback();
+        logger.warn(`All available keys (including fallback keys) for region ${region} are in cooldown`);
+        return null;
 
       } catch (error) {
         await connection.rollback();
