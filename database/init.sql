@@ -141,6 +141,9 @@ INSERT IGNORE INTO `system_config` VALUES (20, 'fallback_key_feature', 'enabled'
 INSERT IGNORE INTO `system_config` VALUES (21, 'fallback_key_priority_threshold', '0', 'Priority threshold for fallback keys (0 = fallback, >0 = normal)', NOW());
 INSERT IGNORE INTO `system_config` VALUES (22, 'fallback_key_detailed_logging', 'true', 'Enable detailed logging when fallback keys are used', NOW());
 
+-- Migration系统配置
+INSERT IGNORE INTO `system_config` VALUES (25, 'migration_system_enabled', 'true', 'Indicates that the migration system is active', NOW());
+
 -- ----------------------------
 -- Table structure for json_billing_configs
 -- ----------------------------
@@ -316,6 +319,34 @@ CREATE TABLE IF NOT EXISTS `billing_resource_history` (
 ) ENGINE=InnoDB AUTO_INCREMENT = 1 CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='账单资源历史记录表';
 
 -- ----------------------------
+-- Table structure for billing_alerts (账单告警记录表)
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `billing_alerts` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `subscription_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `alert_type` enum('cost_threshold','usage_anomaly','query_failure','resource_spike') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `severity` enum('low','medium','high','critical') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'medium',
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `threshold_value` decimal(15,4) DEFAULT NULL,
+  `actual_value` decimal(15,4) DEFAULT NULL,
+  `resource_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `is_resolved` tinyint(1) NOT NULL DEFAULT '0',
+  `resolved_at` timestamp NULL DEFAULT NULL,
+  `resolved_by` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `notification_sent` tinyint(1) NOT NULL DEFAULT '0',
+  `notification_sent_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_subscription_id` (`subscription_id`) USING BTREE,
+  KEY `idx_alert_type` (`alert_type`) USING BTREE,
+  KEY `idx_severity` (`severity`) USING BTREE,
+  KEY `idx_is_resolved` (`is_resolved`) USING BTREE,
+  KEY `idx_created_at` (`created_at`) USING BTREE
+) ENGINE=InnoDB AUTO_INCREMENT = 1 CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='账单告警记录表';
+
+-- ----------------------------
 -- Records of system_config for JSON billing
 -- ----------------------------
 INSERT IGNORE INTO `system_config` VALUES (30, 'json_billing_default_interval_minutes', '1440', 'Default interval in minutes for JSON billing auto-query', NOW());
@@ -324,23 +355,23 @@ INSERT IGNORE INTO `system_config` VALUES (32, 'json_billing_scheduler_enabled',
 INSERT IGNORE INTO `system_config` VALUES (33, 'json_billing_concurrent_queries', '3', 'Maximum concurrent JSON billing queries', NOW());
 
 -- ----------------------------
--- 预置迁移记录 (标记所有迁移为已应用)
+-- 预置迁移记录 (标记所有000-012迁移为已应用)
 -- ----------------------------
 INSERT IGNORE INTO `database_migrations` (`migration_name`, `applied_at`, `checksum`) VALUES
-('000_create_migrations_table.sql', NOW(), 'init_sql_integrated'),
-('001_fix_json_billing_configs_table.sql', NOW(), 'init_sql_integrated'),
-('002_add_example_field.sql', NOW(), 'init_sql_integrated'),
-('002_create_json_billing_tables.sql', NOW(), 'init_sql_integrated'),
-('003_fix_json_billing_configs_table.sql', NOW(), 'init_sql_integrated'),
-('005_mysql57_compatibility.sql', NOW(), 'init_sql_integrated'),
-('006_add_billing_history.sql', NOW(), 'init_sql_integrated'),
-('006_add_scheduled_tasks_table.sql', NOW(), 'init_sql_integrated'),
-('006_create_billing_history_tables.sql', NOW(), 'init_sql_integrated'),
-('006_create_json_billing_tables.sql', NOW(), 'init_sql_integrated'),
-('008_add_status_code_to_logs.sql', NOW(), 'init_sql_integrated'),
-('009_create_billing_subscriptions_table.sql', NOW(), 'init_sql_integrated'),
-('010_create_billing_resource_history_table.sql', NOW(), 'init_sql_integrated'),
-('011_add_query_interval_minutes_to_billing_subscriptions.sql', NOW(), 'init_sql_integrated'),
-('012_add_priority_weight_for_fallback_keys.sql', NOW(), 'init_sql_integrated');
+('000_create_migrations_table.sql', NOW(), 'init_sql_integrated_v2'),
+('001_fix_json_billing_configs_table.sql', NOW(), 'init_sql_integrated_v2'),
+('002_add_example_field.sql', NOW(), 'init_sql_integrated_v2'),
+('002_create_json_billing_tables.sql', NOW(), 'init_sql_integrated_v2'),
+('003_fix_json_billing_configs_table.sql', NOW(), 'init_sql_integrated_v2'),
+('005_mysql57_compatibility.sql', NOW(), 'init_sql_integrated_v2'),
+('006_add_billing_history.sql', NOW(), 'init_sql_integrated_v2'),
+('006_add_scheduled_tasks_table.sql', NOW(), 'init_sql_integrated_v2'),
+('006_create_billing_history_tables.sql', NOW(), 'init_sql_integrated_v2'),
+('006_create_json_billing_tables.sql', NOW(), 'init_sql_integrated_v2'),
+('008_add_status_code_to_logs.sql', NOW(), 'init_sql_integrated_v2'),
+('009_create_billing_subscriptions_table.sql', NOW(), 'init_sql_integrated_v2'),
+('010_create_billing_resource_history_table.sql', NOW(), 'init_sql_integrated_v2'),
+('011_add_query_interval_minutes_to_billing_subscriptions.sql', NOW(), 'init_sql_integrated_v2'),
+('012_add_priority_weight_for_fallback_keys.sql', NOW(), 'init_sql_integrated_v2');
 
 SET FOREIGN_KEY_CHECKS = 1;
