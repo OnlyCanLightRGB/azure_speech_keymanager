@@ -32,7 +32,7 @@ sleep 10
 echo "Running database migrations..."
 if [ -d "/app/database/migrations" ]; then
     # Create migrations table if it doesn't exist
-    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "
+    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" --skip-ssl -e "
         CREATE TABLE IF NOT EXISTS migrations (
             id INT AUTO_INCREMENT PRIMARY KEY,
             filename VARCHAR(255) NOT NULL UNIQUE,
@@ -44,11 +44,11 @@ if [ -d "/app/database/migrations" ]; then
         if [ -f "$migration_file" ]; then
             filename=$(basename "$migration_file")
             # Check if migration has already been run
-            already_run=$(mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -se "SELECT COUNT(*) FROM migrations WHERE filename='$filename'" 2>/dev/null || echo "0")
+            already_run=$(mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" --skip-ssl -se "SELECT COUNT(*) FROM migrations WHERE filename='$filename'" 2>/dev/null || echo "0")
 
             if [ "$already_run" = "0" ]; then
                 echo "Running migration: $filename"
-                if mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < "$migration_file" 2>&1 | {
+                if mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" --skip-ssl < "$migration_file" 2>&1 | {
                     while IFS= read -r line; do
                         # 过滤掉一些正常的警告信息
                         if echo "$line" | grep -v "Duplicate entry" | grep -v "already exists" | grep -v "Unknown column" >/dev/null; then
@@ -57,12 +57,12 @@ if [ -d "/app/database/migrations" ]; then
                     done
                 }; then
                     # Mark migration as completed
-                    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "INSERT IGNORE INTO migrations (filename) VALUES ('$filename')" 2>/dev/null || true
+                    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" --skip-ssl -e "INSERT IGNORE INTO migrations (filename) VALUES ('$filename')" 2>/dev/null || true
                     echo "  Migration $filename completed successfully"
                 else
                     echo "  Warning: Migration $filename may have had issues, but continuing..."
                     # Still mark as completed to avoid re-running
-                    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "INSERT IGNORE INTO migrations (filename) VALUES ('$filename')" 2>/dev/null || true
+                    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" --skip-ssl -e "INSERT IGNORE INTO migrations (filename) VALUES ('$filename')" 2>/dev/null || true
                 fi
             else
                 echo "Migration $filename already applied, skipping"
@@ -79,7 +79,7 @@ echo "Initializing Docker environment data..."
 if [ -f "/app/database/init-docker-data.sql" ]; then
     # Try to run the initialization script
     echo "Running Docker data initialization script..."
-    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < /app/database/init-docker-data.sql 2>&1 | {
+    mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" --skip-ssl < /app/database/init-docker-data.sql 2>&1 | {
         while IFS= read -r line; do
             # 过滤掉重复键错误，这些是正常的
             if echo "$line" | grep -v "Duplicate entry" | grep -v "already exists" >/dev/null; then

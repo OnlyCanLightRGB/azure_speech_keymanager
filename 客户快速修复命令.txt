@@ -1,0 +1,195 @@
+# Azure Speech Key Manager - 客户快速修复命令
+
+## 🚀 一键修复脚本（推荐）
+```bash
+# 下载并运行SSL修复脚本
+chmod +x deploy-fix-ssl.sh
+./deploy-fix-ssl.sh
+```
+
+## 🔧 手动修复命令（逐步执行）
+
+### 1. 停止现有服务
+```bash
+docker-compose down --remove-orphans
+```
+
+### 2. 清理Docker缓存（重要！）
+```bash
+# 删除旧的MySQL镜像
+docker rmi mysql:8.0 2>/dev/null || true
+
+# 删除应用镜像
+docker rmi $(docker images -q azure_speech_keymanager-main-app) 2>/dev/null || true
+
+# 清理系统缓存
+docker system prune -f
+
+# 可选：清理数据卷（会删除数据库数据）
+docker volume rm $(docker volume ls -q | grep azure_speech_keymanager) 2>/dev/null || true
+```
+
+### 3. 拉取最新镜像
+```bash
+docker pull mysql:8.0
+docker pull redis:7-alpine
+docker pull node:18-alpine
+```
+
+### 4. 重新构建应用
+```bash
+docker-compose build --no-cache app
+```
+
+### 5. 启动服务
+```bash
+docker-compose up -d
+```
+
+### 6. 验证部署
+```bash
+# 等待15秒让服务完全启动
+sleep 15
+
+# 检查容器状态
+docker-compose ps
+
+# 检查应用健康状态
+curl http://localhost:3019/api/health | jq
+
+# 如果没有jq，使用这个命令
+curl http://localhost:3019/api/health
+```
+
+## 🐛 故障排除命令
+
+### 查看日志
+```bash
+# 查看应用日志
+docker-compose logs app --tail 50
+
+# 查看MySQL日志
+docker-compose logs mysql_azkm --tail 50
+
+# 实时查看日志
+docker-compose logs -f app
+```
+
+### 检查容器状态
+```bash
+# 查看所有容器状态
+docker-compose ps
+
+# 查看容器详细信息
+docker inspect azure_speech_keymanager-main-app-1
+```
+
+### 重启服务
+```bash
+# 重启应用容器
+docker-compose restart app
+
+# 重启所有服务
+docker-compose restart
+```
+
+### 进入容器调试
+```bash
+# 进入应用容器
+docker exec -it azure_speech_keymanager-main-app-1 /bin/sh
+
+# 进入MySQL容器
+docker exec -it azure_speech_keymanager-main-mysql_azkm-1 mysql -u root -p
+```
+
+## 📊 验证成功的标志
+
+### 1. 容器状态检查
+```bash
+$ docker-compose ps
+# 应该看到所有容器状态为 "running (healthy)"
+```
+
+### 2. 健康检查
+```bash
+$ curl http://localhost:3019/api/health
+# 应该返回：
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "database": "connected",
+    "redis": "connected"
+  }
+}
+```
+
+### 3. 日志检查
+```bash
+$ docker-compose logs app | grep -i error
+# 应该没有SSL相关错误
+
+$ docker-compose logs app | grep "completed successfully"
+# 应该看到多个迁移成功的消息
+```
+
+## ⚡ 紧急恢复命令
+
+如果修复过程中出现问题，使用以下命令恢复：
+
+```bash
+# 完全重置（慎用！会删除所有数据）
+docker-compose down -v
+docker system prune -af
+docker volume prune -f
+
+# 重新开始
+git pull origin main
+docker-compose up -d --build
+```
+
+## 🔍 环境检查命令
+
+在开始修复前，先检查环境：
+
+```bash
+# 检查Docker版本
+docker --version
+docker-compose --version
+
+# 检查端口占用
+netstat -tulpn | grep :3019
+netstat -tulpn | grep :3000
+
+# 检查磁盘空间
+df -h
+
+# 检查内存使用
+free -h
+```
+
+## 📞 获取支持信息
+
+如需技术支持，请运行以下命令收集信息：
+
+```bash
+# 系统信息
+uname -a
+docker --version
+docker-compose --version
+
+# 容器状态
+docker-compose ps
+
+# 应用日志
+docker-compose logs app --tail 100 > app.log
+
+# MySQL日志
+docker-compose logs mysql_azkm --tail 100 > mysql.log
+
+echo "请将 app.log 和 mysql.log 文件发送给技术支持"
+```
+
+---
+修复版本: v1.1.0
+更新时间: 2025-09-30
