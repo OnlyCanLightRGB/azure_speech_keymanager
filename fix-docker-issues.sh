@@ -107,7 +107,7 @@ services:
       - azkm_network
 
   mysql_azkm:
-    image: mysql:8.0
+    image: mysql:5.7
     environment:
       - MYSQL_ROOT_PASSWORD=rootpassword
       - MYSQL_DATABASE=azure_speech_keymanager

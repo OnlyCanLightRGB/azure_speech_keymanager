@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Technical Stack
 - **Backend**: TypeScript, Express.js, Node.js
 - **Frontend**: Next.js, React, Material UI
-- **Database**: MySQL 8.0+
+- **Database**: MySQL 5.7+
 - **Cache**: Redis
 - **Testing**: Jest
 - **Development**: ESLint, TypeScript, Nodemon

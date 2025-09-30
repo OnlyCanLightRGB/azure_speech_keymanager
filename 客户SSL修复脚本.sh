@@ -2,13 +2,13 @@
 
 # Azure Speech Key Manager - 客户SSL修复脚本
 # 专门针对客户服务器环境的SSL证书问题修复
-# 适用于：CentOS 7 + Docker 20.10.8 + MySQL 8.0.27
+# 适用于：CentOS 7 + Docker 20.10.8 + MySQL 5.7
 
 set -e
 
 echo "🚀 Azure Speech Key Manager - 客户SSL修复脚本"
 echo "=================================================="
-echo "目标：修复MySQL 8.0 SSL自签名证书错误"
+echo "目标：修复MySQL 5.7 SSL自签名证书错误"
 echo "环境：CentOS 7 + Docker 20.10.8"
 echo ""
 
@@ -127,8 +127,8 @@ services:
       - azkm_network
 
   mysql_azkm:
-    image: mysql:8.0
-    command: --skip-ssl --default-authentication-plugin=mysql_native_password
+    image: mysql:5.7
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --skip-ssl --default-authentication-plugin=mysql_native_password --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
     environment:
       - MYSQL_ROOT_PASSWORD=rootpassword
       - MYSQL_DATABASE=azure_speech_keymanager

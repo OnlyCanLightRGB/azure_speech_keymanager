@@ -19,7 +19,7 @@ unknown variable 'ssl-mode=DISABLED'
 ```yaml
 # docker-compose.yml
 mysql_azkm:
-  image: mysql:8.0
+  image: mysql:5.7
   command: --skip-ssl --default-authentication-plugin=mysql_native_password
 ```
 
@@ -60,7 +60,7 @@ chmod +x deploy-fix-ssl.sh
 docker-compose down --remove-orphans
 
 # 删除旧镜像（强制更新）
-docker rmi mysql:8.0
+docker rmi mysql:5.7
 docker rmi $(docker images -q azure_speech_keymanager-main-app)
 
 # 清理系统缓存
@@ -73,7 +73,7 @@ docker volume rm $(docker volume ls -q | grep azure_speech_keymanager)
 2. **重新构建和启动**
 ```bash
 # 拉取最新镜像
-docker pull mysql:8.0
+docker pull mysql:5.7
 docker pull redis:7-alpine
 docker pull node:18-alpine
 
@@ -190,4 +190,4 @@ docker-compose logs app --tail 100 -f
 
 **修复版本**: v1.1.0  
 **修复日期**: 2025-09-30  
-**适用环境**: MySQL 5.7+ / MySQL 8.0+
+**适用环境**: MySQL 5.7 (推荐版本)

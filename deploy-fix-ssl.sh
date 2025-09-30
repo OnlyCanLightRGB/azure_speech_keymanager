@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Azure Speech Key Manager - SSL修复部署脚本
-# 解决MySQL 8.0 SSL证书问题
+# 解决MySQL 5.7 SSL证书问题
 # 适用于客户环境部署
 
 set -e
@@ -70,7 +70,7 @@ cleanup_docker() {
     
     # 删除相关镜像（强制更新）
     log_info "删除旧的MySQL镜像缓存..."
-    docker rmi mysql:8.0 2>/dev/null || true
+    docker rmi mysql:5.7 2>/dev/null || true
     docker rmi $(docker images -q azure_speech_keymanager-main-app) 2>/dev/null || true
     
     # 清理未使用的镜像和容器
@@ -94,7 +94,7 @@ pull_images() {
     log_info "拉取最新Docker镜像..."
     
     # 强制拉取最新的MySQL镜像
-    docker pull mysql:8.0
+    docker pull mysql:5.7
     docker pull redis:7-alpine
     docker pull node:18-alpine
     
@@ -187,14 +187,14 @@ show_ssl_fix_info() {
     echo "🔧 SSL修复说明："
     echo "=================================================="
     echo "本次修复解决了以下问题："
-    echo "1. MySQL 8.0 SSL证书自签名错误"
+    echo "1. MySQL 5.7 SSL证书自签名错误"
     echo "2. 客户端SSL连接参数不兼容"
     echo "3. Docker环境SSL配置冲突"
     echo ""
     echo "修复内容："
     echo "- docker-compose.yml: 添加 --skip-ssl 参数"
     echo "- start.sh: 统一使用 --skip-ssl 参数"
-    echo "- 兼容MySQL 5.7和8.0版本"
+    echo "- 专为MySQL 5.7版本优化"
     echo ""
     echo "⚠️  注意事项："
     echo "- SSL已禁用，仅适用于内网环境"

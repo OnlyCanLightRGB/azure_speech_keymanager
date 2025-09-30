@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3019:3019"
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3019
+      - FRONTEND_PORT=3000
+      - DB_HOST=mysql_azkm
+      - DB_USER=azure_speech_keymanager
+      - DB_PASSWORD=azure_speech_keymanager
+      - DB_NAME=azure_speech_keymanager
+      - REDIS_URL=redis://redis_azkm:6379
+    depends_on:
+      - mysql_azkm
+      - redis_azkm
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./database:/app/database
+    restart: unless-stopped
+    networks:
+      - azure_speech_network
+
+  # 使用MySQL 8.0但配置为MySQL 5.7兼容模式
+  mysql_azkm:
+    image: mysql:8.0
+    platform: linux/amd64  # 强制使用AMD64架构以确保兼容性
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --skip-ssl
+      --default-authentication-plugin=mysql_native_password
+      --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+      --lower_case_table_names=1
+      --max_connections=1000
+      --innodb_buffer_pool_size=256M
+      --innodb_log_file_size=64M
+      --innodb_flush_log_at_trx_commit=2
+      --sync_binlog=0
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=azure_speech_keymanager
+      - MYSQL_USER=azure_speech_keymanager
+      - MYSQL_PASSWORD=azure_speech_keymanager
+      - MYSQL_CHARSET=utf8mb4
+      - MYSQL_COLLATION=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/init-docker-data.sql:/docker-entrypoint-initdb.d/02-init-docker-data.sql:ro
+    restart: unless-stopped
+    networks:
+      - azure_speech_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 40s
+
+  redis_azkm:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - azure_speech_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 3s
+      retries: 5
+      interval: 5s
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  azure_speech_network:
+    driver: bridge

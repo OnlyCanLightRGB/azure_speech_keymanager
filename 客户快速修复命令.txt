@@ -17,7 +17,7 @@ docker-compose down --remove-orphans
 ### 2. 清理Docker缓存（重要！）
 ```bash
 # 删除旧的MySQL镜像
-docker rmi mysql:8.0 2>/dev/null || true
+docker rmi mysql:5.7 2>/dev/null || true
 
 # 删除应用镜像
 docker rmi $(docker images -q azure_speech_keymanager-main-app) 2>/dev/null || true
@@ -31,7 +31,7 @@ docker volume rm $(docker volume ls -q | grep azure_speech_keymanager) 2>/dev/nu
 
 ### 3. 拉取最新镜像
 ```bash
-docker pull mysql:8.0
+docker pull mysql:5.7
 docker pull redis:7-alpine
 docker pull node:18-alpine
 ```

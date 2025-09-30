@@ -18,7 +18,7 @@ echo "✅ 应用镜像导出完成: $EXPORT_DIR/app-image.tar"
 
 echo "📦 2. 导出MySQL镜像..."
 # 导出MySQL镜像
-docker save mysql:8.0 -o "$EXPORT_DIR/mysql-image.tar"
+docker save mysql:5.7 -o "$EXPORT_DIR/mysql-image.tar"
 echo "✅ MySQL镜像导出完成: $EXPORT_DIR/mysql-image.tar"
 
 echo "📦 3. 导出Redis镜像..."

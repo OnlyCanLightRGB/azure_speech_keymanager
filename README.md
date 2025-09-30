@@ -69,7 +69,7 @@ Azure语音服务密钥管理系统 - 一个全面的基于Web的Azure语音服�
 
 - **后端**: TypeScript, Express.js, Node.js
 - **前端**: Next.js, React, Material UI
-- **数据库**: MySQL 8.0+, Redis
+- **数据库**: MySQL 5.7+, Redis
 - **开发工具**: ESLint, TypeScript, Nodemon
 - **维护工具**: 自动清理脚本, 项目统计工具
 - **部署**: Docker支持, 生产环境脚本
@@ -78,7 +78,7 @@ Azure语音服务密钥管理系统 - 一个全面的基于Web的Azure语音服�
 
 ### 环境要求
 - Node.js 18+
-- MySQL 8.0+
+- MySQL 5.7+
 - Redis (必需，用于冷却管理和高并发场景)
 - Azure语音服务订阅
 
@@ -93,7 +93,7 @@ sudo apt update
 sudo apt install mysql-server
 
 # Windows
-# 下载并安装 MySQL 8.0+ 从官网
+# 下载并安装 MySQL 5.7+ 从官网
 # https://dev.mysql.com/downloads/mysql/
 
 # macOS
