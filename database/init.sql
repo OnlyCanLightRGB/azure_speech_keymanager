@@ -1,16 +1,50 @@
+-- Azure Speech Key Manager Database Initialization Script
+-- 完整的数据库初始化脚本，整合所有000-012 migration功能
+-- 专为MySQL 5.7设计，兼容MySQL 8.0
+-- Created: 2025-09-30
+-- Version: 4.0 - MySQL 5.7完整整合版本
+--
+-- 整合的Migration文件：
+-- 000_create_migrations_table.sql
+-- 002_create_json_billing_tables.sql
+-- 003_fix_json_billing_configs_table.sql
+-- 005_mysql57_compatibility.sql
+-- 006_add_billing_history.sql
+-- 006_add_scheduled_tasks_table.sql
+-- 006_create_billing_history_tables.sql
+-- 006_create_json_billing_tables.sql
+-- 008_add_status_code_to_logs.sql
+-- 009_create_billing_subscriptions_table.sql
+-- 010_create_billing_resource_history_table.sql
+-- 011_add_query_interval_minutes_to_billing_subscriptions.sql
+-- 012_add_priority_weight_for_fallback_keys.sql
+
 SET NAMES utf8mb4;
 SET character_set_client = utf8mb4;
 SET character_set_connection = utf8mb4;
 SET character_set_database = utf8mb4;
 SET character_set_results = utf8mb4;
 SET character_set_server = utf8mb4;
-SET collation_connection = utf8mb4_general_ci;
-SET collation_database = utf8mb4_general_ci;
-SET collation_server = utf8mb4_general_ci;
+SET collation_connection = utf8mb4_unicode_ci;
+SET collation_database = utf8mb4_unicode_ci;
+SET collation_server = utf8mb4_unicode_ci;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- ----------------------------
--- Table structure for azure_keys (包含保底密钥功能)
+-- Table structure for database_migrations (000_create_migrations_table.sql)
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `database_migrations` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `migration_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `applied_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `checksum` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `unique_migration_name` (`migration_name`) USING BTREE,
+  KEY `idx_applied_at` (`applied_at`) USING BTREE
+) ENGINE=InnoDB AUTO_INCREMENT = 1 CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据库迁移记录表';
+
+-- ----------------------------
+-- Table structure for azure_keys (主表 + 012_add_priority_weight_for_fallback_keys.sql)
 -- ----------------------------
 CREATE TABLE IF NOT EXISTS `azure_keys`  (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -97,18 +131,7 @@ CREATE TABLE IF NOT EXISTS `translation_key_logs`  (
   CONSTRAINT `translation_key_logs_ibfk_1` FOREIGN KEY (`key_id`) REFERENCES `translation_keys` (`id`) ON DELETE SET NULL ON UPDATE RESTRICT
 ) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
--- ----------------------------
--- Table structure for database_migrations (迁移跟踪表)
--- ----------------------------
-CREATE TABLE IF NOT EXISTS `database_migrations` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `migration_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `applied_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `checksum` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE,
-  UNIQUE KEY `unique_migration_name` (`migration_name`) USING BTREE,
-  KEY `idx_applied_at` (`applied_at`) USING BTREE
-) ENGINE=InnoDB AUTO_INCREMENT = 1 CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- ----------------------------
 -- Table structure for system_config
@@ -347,31 +370,62 @@ CREATE TABLE IF NOT EXISTS `billing_alerts` (
 ) ENGINE=InnoDB AUTO_INCREMENT = 1 CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='账单告警记录表';
 
 -- ----------------------------
--- Records of system_config for JSON billing
+-- 系统配置数据 (整合所有migration的配置)
 -- ----------------------------
-INSERT IGNORE INTO `system_config` VALUES (30, 'json_billing_default_interval_minutes', '1440', 'Default interval in minutes for JSON billing auto-query', NOW());
-INSERT IGNORE INTO `system_config` VALUES (31, 'json_billing_max_configs', '50', 'Maximum number of JSON billing configurations allowed', NOW());
-INSERT IGNORE INTO `system_config` VALUES (32, 'json_billing_scheduler_enabled', 'true', 'Enable/disable JSON billing scheduler', NOW());
-INSERT IGNORE INTO `system_config` VALUES (33, 'json_billing_concurrent_queries', '3', 'Maximum concurrent JSON billing queries', NOW());
+
+-- 基础系统配置
+INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
+('sticky_duration_minutes', '30', 'Sticky key duration in minutes'),
+('cooldown_duration_minutes', '5', 'Key cooldown duration in minutes'),
+('max_error_count', '3', 'Maximum error count before key is disabled'),
+('enable_key_rotation', 'true', 'Enable automatic key rotation'),
+('log_retention_days', '30', 'Number of days to retain logs'),
+('api_rate_limit_per_minute', '60', 'API rate limit per minute per key'),
+('health_check_interval_minutes', '5', 'Health check interval in minutes'),
+('backup_enabled', 'true', 'Enable automatic database backups'),
+('maintenance_mode', 'false', 'System maintenance mode'),
+('debug_mode', 'false', 'Enable debug logging');
+
+-- JSON账单系统配置 (002_create_json_billing_tables.sql)
+INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
+('json_billing_default_interval_minutes', '1440', 'Default interval in minutes for JSON billing auto-query'),
+('json_billing_max_configs', '50', 'Maximum number of JSON billing configurations allowed'),
+('json_billing_scheduler_enabled', 'true', 'Enable/disable JSON billing scheduler'),
+('json_billing_concurrent_queries', '3', 'Maximum concurrent JSON billing queries');
+
+-- Migration系统配置 (002_add_example_field.sql)
+INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
+('migration_system_enabled', 'true', 'Indicates that the migration system is active');
+
+-- MySQL 5.7兼容性配置 (005_mysql57_compatibility.sql)
+INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
+('mysql57_compatibility', 'enabled', 'MySQL 5.7 compatibility mode enabled'),
+('db_compatibility_version', '5.7', 'Database compatibility version');
+
+-- 保底密钥功能配置 (012_add_priority_weight_for_fallback_keys.sql)
+INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
+('fallback_key_feature', 'enabled', 'Fallback key functionality enabled'),
+('fallback_key_priority_threshold', '0', 'Priority threshold for fallback keys (0 = fallback, >0 = normal)'),
+('fallback_key_detailed_logging', 'true', 'Enable detailed logging when fallback keys are used');
 
 -- ----------------------------
 -- 预置迁移记录 (标记所有000-012迁移为已应用)
 -- ----------------------------
 INSERT IGNORE INTO `database_migrations` (`migration_name`, `applied_at`, `checksum`) VALUES
-('000_create_migrations_table.sql', NOW(), 'init_sql_integrated_v2'),
-('001_fix_json_billing_configs_table.sql', NOW(), 'init_sql_integrated_v2'),
-('002_add_example_field.sql', NOW(), 'init_sql_integrated_v2'),
-('002_create_json_billing_tables.sql', NOW(), 'init_sql_integrated_v2'),
-('003_fix_json_billing_configs_table.sql', NOW(), 'init_sql_integrated_v2'),
-('005_mysql57_compatibility.sql', NOW(), 'init_sql_integrated_v2'),
-('006_add_billing_history.sql', NOW(), 'init_sql_integrated_v2'),
-('006_add_scheduled_tasks_table.sql', NOW(), 'init_sql_integrated_v2'),
-('006_create_billing_history_tables.sql', NOW(), 'init_sql_integrated_v2'),
-('006_create_json_billing_tables.sql', NOW(), 'init_sql_integrated_v2'),
-('008_add_status_code_to_logs.sql', NOW(), 'init_sql_integrated_v2'),
-('009_create_billing_subscriptions_table.sql', NOW(), 'init_sql_integrated_v2'),
-('010_create_billing_resource_history_table.sql', NOW(), 'init_sql_integrated_v2'),
-('011_add_query_interval_minutes_to_billing_subscriptions.sql', NOW(), 'init_sql_integrated_v2'),
-('012_add_priority_weight_for_fallback_keys.sql', NOW(), 'init_sql_integrated_v2');
+('000_create_migrations_table.sql', NOW(), 'mysql57_init_complete_v4'),
+('001_fix_json_billing_configs_table.sql', NOW(), 'mysql57_init_complete_v4'),
+('002_add_example_field.sql', NOW(), 'mysql57_init_complete_v4'),
+('002_create_json_billing_tables.sql', NOW(), 'mysql57_init_complete_v4'),
+('003_fix_json_billing_configs_table.sql', NOW(), 'mysql57_init_complete_v4'),
+('005_mysql57_compatibility.sql', NOW(), 'mysql57_init_complete_v4'),
+('006_add_billing_history.sql', NOW(), 'mysql57_init_complete_v4'),
+('006_add_scheduled_tasks_table.sql', NOW(), 'mysql57_init_complete_v4'),
+('006_create_billing_history_tables.sql', NOW(), 'mysql57_init_complete_v4'),
+('006_create_json_billing_tables.sql', NOW(), 'mysql57_init_complete_v4'),
+('008_add_status_code_to_logs.sql', NOW(), 'mysql57_init_complete_v4'),
+('009_create_billing_subscriptions_table.sql', NOW(), 'mysql57_init_complete_v4'),
+('010_create_billing_resource_history_table.sql', NOW(), 'mysql57_init_complete_v4'),
+('011_add_query_interval_minutes_to_billing_subscriptions.sql', NOW(), 'mysql57_init_complete_v4'),
+('012_add_priority_weight_for_fallback_keys.sql', NOW(), 'mysql57_init_complete_v4');
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -39,7 +39,7 @@ services:
       - MYSQL_PASSWORD=azure_speech_keymanager
     volumes:
       - mysql_azkm_data:/var/lib/mysql
-      - ./database/init_mysql57_complete.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "azure_speech_keymanager", "-pazure_speech_keymanager"]
