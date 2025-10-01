@@ -25,6 +25,7 @@ import { createUploadRoutes } from './routes/upload';
 import { createConfigRoutes } from './routes/config';
 import { createAzureCLIRoutes } from './routes/azure-cli';
 import { createBillingRoutes } from './routes/billing';
+import { createNotificationRoutes } from './routes/notification';
 import { billingAzureRouter, setAutoBillingService } from './routes/billing-azure';
 
 import scriptsRouter from './routes/scripts';
@@ -147,6 +148,7 @@ class Server {
     this.app.use('/api/config', createConfigRoutes(this.database.getPool()));
     this.app.use('/api/azure-cli', createAzureCLIRoutes(this.azureCLIService, this.enhancedConfigService));
     this.app.use('/api/billing', createBillingRoutes(this.billingService, this.schedulerService));
+    this.app.use('/api/notification', createNotificationRoutes(this.database.getPool()));
 
     
     // 添加调试日志

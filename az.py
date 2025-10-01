@@ -347,14 +347,40 @@ def main(credentials_file="azure_credentials.json"):
 # 使用示例
 if __name__ == "__main__":
     import sys
-    
-    # 支持命令行参数指定凭据文件
-    credentials_file = "azure_credentials.json"
-    if len(sys.argv) > 1:
-        credentials_file = sys.argv[1]
-        print(f"🔧 使用指定的凭据文件: {credentials_file}")
-    else:
-        print(f"🔧 使用默认凭据文件: {credentials_file}")
+    import argparse
+
+    # 处理帮助信息 - 在argparse之前处理
+    if len(sys.argv) > 1 and sys.argv[1] in ['--help', '-h', 'help']:
+        print("🔧 Azure账单查询工具使用说明")
+        print("=" * 50)
+        print("用法: python az.py [凭据文件路径]")
+        print("")
+        print("参数:")
+        print("  凭据文件路径    Azure凭据JSON文件路径 (可选，默认: azure_credentials.json)")
+        print("")
+        print("凭据文件格式:")
+        print('{')
+        print('  "appId": "your-app-id",')
+        print('  "displayName": "your-app-display-name",')
+        print('  "password": "your-app-password",')
+        print('  "tenant": "your-tenant-id"')
+        print('}')
+        print("")
+        print("示例:")
+        print("  python az.py                           # 使用默认凭据文件")
+        print("  python az.py my_credentials.json       # 使用指定凭据文件")
+        sys.exit(0)
+
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(description='Azure账单查询工具', add_help=False)
+    parser.add_argument('credentials_file', nargs='?', default='azure_credentials.json',
+                       help='Azure凭据文件路径 (默认: azure_credentials.json)')
+
+    args = parser.parse_args()
+    credentials_file = args.credentials_file
+
+    print(f"🔧 使用指定的凭据文件: {credentials_file}")
+    if credentials_file == "azure_credentials.json":
         print(f"💡 提示: 可以通过命令行参数指定其他文件，例如: python az.py my_credentials.json")
     
     main(credentials_file)

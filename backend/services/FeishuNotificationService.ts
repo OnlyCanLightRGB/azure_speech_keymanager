@@ -25,19 +25,29 @@ export class FeishuNotificationService {
     }
 
     try {
+      // 确保中文内容正确编码
+      const textContent = `${title}\n${content}`;
+
       const payload = {
         msg_type: 'text',
         content: {
-          text: `${title}\n${content}`
+          text: textContent
         }
       };
+
+      // 使用 Buffer 确保 UTF-8 编码
+      const jsonString = JSON.stringify(payload, null, 0);
+      const bodyBuffer = Buffer.from(jsonString, 'utf8');
 
       const response = await fetch(this.config.webhookUrl, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json',
+          'User-Agent': 'Azure-Speech-KeyManager/1.0',
+          'Content-Length': bodyBuffer.length.toString()
         },
-        body: JSON.stringify(payload)
+        body: bodyBuffer
       });
 
       if (response.ok) {

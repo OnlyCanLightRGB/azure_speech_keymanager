@@ -1505,13 +1505,15 @@ export class AutoBillingService {
       
       const query = `
         INSERT INTO billing_history (
-          subscription_id, query_date, period_start, period_end, total_cost, currency,
-          speech_cost, translation_cost, other_cost, usage_count, resource_count,
+          subscription_id, query_date, period_start, period_end, billing_period_start, billing_period_end,
+          total_cost, currency, speech_cost, translation_cost, other_cost, usage_count, resource_count,
           raw_data, anomalies_detected, anomaly_details, query_status, error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           period_start = VALUES(period_start),
           period_end = VALUES(period_end),
+          billing_period_start = VALUES(billing_period_start),
+          billing_period_end = VALUES(billing_period_end),
           total_cost = VALUES(total_cost),
           currency = VALUES(currency),
           speech_cost = VALUES(speech_cost),
@@ -1539,6 +1541,8 @@ export class AutoBillingService {
         queryDate,
         periodStart,
         periodEnd,
+        periodStart,                     // billing_period_start 使用相同的值
+        periodEnd,                       // billing_period_end 使用相同的值
         record.totalCost ?? null,        // 确保 undefined 转换为 null
         record.currency ?? null,         // 确保 undefined 转换为 null
         record.speechCost ?? null,       // 确保 undefined 转换为 null

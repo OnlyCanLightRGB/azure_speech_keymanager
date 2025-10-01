@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS `json_billing_configs` (
 -- ----------------------------
 CREATE TABLE IF NOT EXISTS `json_billing_history` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `config_name` varchar(255) NOT NULL,
   `file_name` varchar(255) NOT NULL,
   `file_path` varchar(500) NOT NULL,
   `app_id` varchar(255) NOT NULL,
@@ -217,6 +218,7 @@ CREATE TABLE IF NOT EXISTS `json_billing_history` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
+  KEY `idx_config_name` (`config_name`),
   KEY `idx_file_name` (`file_name`),
   KEY `idx_app_id` (`app_id`),
   KEY `idx_tenant_id` (`tenant_id`),
@@ -301,20 +303,34 @@ CREATE TABLE IF NOT EXISTS `billing_subscriptions` (
 CREATE TABLE IF NOT EXISTS `billing_history` (
   `id` int NOT NULL AUTO_INCREMENT,
   `subscription_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `query_date` date NOT NULL,
+  `period_start` date NOT NULL,
+  `period_end` date NOT NULL,
   `billing_period_start` date NOT NULL,
   `billing_period_end` date NOT NULL,
   `total_cost` decimal(15,4) DEFAULT NULL,
   `currency` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'USD',
+  `speech_cost` decimal(15,4) DEFAULT 0.0000,
+  `translation_cost` decimal(15,4) DEFAULT 0.0000,
+  `other_cost` decimal(15,4) DEFAULT 0.0000,
+  `usage_count` int DEFAULT 0,
+  `resource_count` int DEFAULT 0,
+  `raw_data` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '原始账单数据JSON',
   `billing_data` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '完整账单数据JSON',
+  `anomalies_detected` tinyint(1) DEFAULT 0,
+  `anomaly_details` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `query_status` enum('success','failed','partial') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'success',
   `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `unique_subscription_query` (`subscription_id`, `query_date`) USING BTREE,
   KEY `idx_subscription_id` (`subscription_id`) USING BTREE,
   KEY `idx_billing_period` (`billing_period_start`, `billing_period_end`) USING BTREE,
+  KEY `idx_period` (`period_start`, `period_end`) USING BTREE,
   KEY `idx_query_status` (`query_status`) USING BTREE,
-  KEY `idx_total_cost` (`total_cost`) USING BTREE
+  KEY `idx_total_cost` (`total_cost`) USING BTREE,
+  KEY `idx_query_date` (`query_date`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT = 1 CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='账单历史记录表';
 
 -- ----------------------------
@@ -407,6 +423,12 @@ INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`)
 ('fallback_key_feature', 'enabled', 'Fallback key functionality enabled'),
 ('fallback_key_priority_threshold', '0', 'Priority threshold for fallback keys (0 = fallback, >0 = normal)'),
 ('fallback_key_detailed_logging', 'true', 'Enable detailed logging when fallback keys are used');
+
+-- 飞书通知功能配置 (feat:新增飞书机器人通知密钥401报警)
+INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
+('feishu_notification_enabled', 'true', 'Enable Feishu notifications for key errors'),
+('feishu_webhook_url', 'https://open.feishu.cn/open-apis/bot/v2/hook/94a7f77f-dc0d-4439-8ca5-d070c45fa05a', 'Feishu webhook URL for notifications'),
+('feishu_notification_template', '🚨 Azure密钥401错误警报\n\n密钥ID: {keyId}\n密钥名称: {keyName}\n服务类型: {service}\n错误时间: {timestamp}\n\n该密钥已被自动禁用，请检查密钥状态并及时更换。', 'Template for Feishu 401 error notifications');
 
 -- ----------------------------
 -- 预置迁移记录 (标记所有000-012迁移为已应用)
