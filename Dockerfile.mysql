@@ -1,0 +1,7 @@
+FROM mysql:5.7
+
+# Copy the init.sql file into the container
+COPY database/init.sql /docker-entrypoint-initdb.d/init.sql
+
+# Set proper permissions
+RUN chmod 644 /docker-entrypoint-initdb.d/init.sql

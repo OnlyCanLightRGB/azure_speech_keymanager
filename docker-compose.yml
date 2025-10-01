@@ -15,9 +15,9 @@ services:
       redis_azkm:
         condition: service_healthy
     volumes:
-      - ./logs:/app/logs
-      - ./uploads:/app/uploads
-      - ./backups:/app/backups
+      - app_logs:/app/logs
+      - app_uploads:/app/uploads
+      - app_backups:/app/backups
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:$$PORT/api/health || exit 1"]
@@ -29,7 +29,9 @@ services:
       - azkm_network
 
   mysql_azkm:
-    image: mysql:5.7
+    build:
+      context: .
+      dockerfile: Dockerfile.mysql
     platform: linux/amd64
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --skip-ssl --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
     environment:
@@ -39,7 +41,6 @@ services:
       - MYSQL_PASSWORD=azure_speech_keymanager
     volumes:
       - mysql_azkm_data:/var/lib/mysql
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "azure_speech_keymanager", "-pazure_speech_keymanager"]
@@ -71,3 +72,6 @@ networks:
 volumes:
   mysql_azkm_data:
   redis_azkm_data:
+  app_logs:
+  app_uploads:
+  app_backups:
