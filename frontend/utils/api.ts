@@ -15,17 +15,11 @@ import {
 
 // Dynamic API URL detection for better Docker compatibility
 const getApiBaseUrl = (): string => {
-  // If NEXT_PUBLIC_API_URL is explicitly set, use it
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
-  }
-
-  // For client-side (browser), detect the current host and use backend port
+  // For client-side (browser), use relative path to go through Next.js proxy
   if (typeof window !== 'undefined') {
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname;
-    // In Docker deployment, backend runs on port 3019
-    return `${protocol}//${hostname}:3019`;
+    // Use relative path so requests go through Next.js rewrites proxy
+    // This way: browser -> frontend:3000/api/xxx -> proxy -> backend:3019/api/xxx
+    return '';
   }
 
   // For server-side rendering, use empty string (relative path)

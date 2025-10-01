@@ -36,7 +36,7 @@ RUN cd frontend && \
     BACKEND_PORT=3019 \
     DOCKER_ENV=true \
     NODE_ENV=production \
-    NEXT_PUBLIC_API_URL="http://localhost:3019" \
+    NEXT_PUBLIC_API_URL="" \
     npm run build
 
 # Production image, copy all the files and run the app
