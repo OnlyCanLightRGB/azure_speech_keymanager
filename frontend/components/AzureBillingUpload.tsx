@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -37,6 +37,7 @@ import {
   FormControl,
   InputLabel
 } from '@mui/material';
+import { styled } from '@mui/material/styles';
 import {
   CloudUpload,
   ExpandMore,
@@ -51,9 +52,12 @@ import {
   Add,
   Edit,
   Delete,
-  PlayArrow
+  PlayArrow,
+  Assessment,
+  Visibility,
+  KeyboardArrowDown,
+  KeyboardArrowUp
 } from '@mui/icons-material';
-import { styled } from '@mui/material/styles';
 
 const VisuallyHiddenInput = styled('input')({
   clip: 'rect(0 0 0 0)',
@@ -147,6 +151,9 @@ interface JsonBillingConfig {
   errorMessage?: string;
   createdAt?: string;
   updatedAt?: string;
+  // 前端扩展字段，用于存储历史记录
+  history?: JsonBillingHistoryRecord[];
+  historyCount?: number;
 }
 
 interface JsonBillingConfigResponse {
@@ -186,8 +193,23 @@ const AzureBillingUpload: React.FC = () => {
   const [jsonConfigs, setJsonConfigs] = useState<JsonBillingConfig[]>([]);
   const [configsLoading, setConfigsLoading] = useState(false);
   const [configsError, setConfigsError] = useState<string | null>(null);
+
+  // 添加调试日志
+  useEffect(() => {
+    console.log('📊 JSON配置状态更新:', jsonConfigs.length, '个配置', jsonConfigs);
+  }, [jsonConfigs]);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
+
+  // 添加对话框状态监听
+  useEffect(() => {
+    console.log('📊 配置对话框状态变化:', configDialogOpen);
+  }, [configDialogOpen]);
   const [editingConfig, setEditingConfig] = useState<JsonBillingConfig | null>(null);
+
+  // 配置历史记录展开状态
+  const [expandedConfigs, setExpandedConfigs] = useState<Set<number>>(new Set());
+  const [configHistories, setConfigHistories] = useState<Map<number, JsonBillingHistoryRecord[]>>(new Map());
+  const [configHistoryLoading, setConfigHistoryLoading] = useState<Set<number>>(new Set());
   const [configForm, setConfigForm] = useState<Partial<JsonBillingConfig>>({
     configName: '',
     fileName: '',
@@ -404,6 +426,12 @@ const AzureBillingUpload: React.FC = () => {
   };
 
   const fetchJsonConfigs = async () => {
+    // 防止重复调用
+    if (configsLoading) {
+      return;
+    }
+
+    console.log('🔄 开始获取JSON配置...');
     setConfigsLoading(true);
     setConfigsError(null);
 
@@ -411,12 +439,47 @@ const AzureBillingUpload: React.FC = () => {
       const response = await fetch('/api/billing-azure/json-configs');
       const data: JsonBillingConfigResponse = await response.json();
 
+      console.log('📊 API响应:', data);
+
       if (response.ok && data.success && data.data) {
-        setJsonConfigs(data.data.configs);
+        console.log(`✅ 获取到 ${data.data.configs.length} 个配置`);
+        // 为每个配置获取历史记录
+        const configsWithHistory = await Promise.all(
+          data.data.configs.map(async (config) => {
+            if (config.id) {
+              try {
+                // 获取该配置的历史记录
+                const historyResponse = await fetch(`/api/billing-azure/json-history?fileName=${encodeURIComponent(config.fileName)}&limit=10`);
+                const historyData = await historyResponse.json();
+
+                if (historyResponse.ok && historyData.success && historyData.data) {
+                  return {
+                    ...config,
+                    history: historyData.data.history || [],
+                    historyCount: historyData.data.totalCount || 0
+                  };
+                }
+              } catch (error) {
+                console.error(`Failed to fetch history for config ${config.id}:`, error);
+              }
+            }
+
+            return {
+              ...config,
+              history: [],
+              historyCount: 0
+            };
+          })
+        );
+
+        console.log('🎯 设置配置数据:', configsWithHistory);
+        setJsonConfigs(configsWithHistory);
       } else {
+        console.error('❌ API响应错误:', data);
         setConfigsError(data.error || data.message || '获取JSON配置失败');
       }
     } catch (err: any) {
+      console.error('❌ 网络错误:', err);
       setConfigsError('网络错误: ' + err.message);
     } finally {
       setConfigsLoading(false);
@@ -493,7 +556,84 @@ const AzureBillingUpload: React.FC = () => {
     }
   };
 
+  // 获取特定配置的历史记录
+  const fetchConfigHistory = async (configId: number) => {
+    setConfigHistoryLoading(prev => new Set(prev).add(configId));
+
+    try {
+      // 先找到对应的配置以获取fileName
+      const config = jsonConfigs.find(c => c.id === configId);
+      if (!config) {
+        console.error('找不到配置ID:', configId);
+        return;
+      }
+
+      const response = await fetch(`/api/billing-azure/json-history?fileName=${encodeURIComponent(config.fileName)}&limit=5`);
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setConfigHistories(prev => new Map(prev).set(configId, data.data.history || []));
+      } else {
+        console.error('获取配置历史失败:', data.error || data.message);
+      }
+    } catch (err: any) {
+      console.error('网络错误:', err.message);
+    } finally {
+      setConfigHistoryLoading(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(configId);
+        return newSet;
+      });
+    }
+  };
+
+  // 切换配置历史记录展开状态
+  const toggleConfigHistory = async (configId: number) => {
+    const isExpanded = expandedConfigs.has(configId);
+
+    if (isExpanded) {
+      // 收起
+      setExpandedConfigs(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(configId);
+        return newSet;
+      });
+    } else {
+      // 展开并获取历史记录
+      setExpandedConfigs(prev => new Set(prev).add(configId));
+      if (!configHistories.has(configId)) {
+        await fetchConfigHistory(configId);
+      }
+    }
+  };
+
+  // 添加缺失的函数
+  const executeConfig = executeJsonConfig; // 别名
+  const deleteConfig = deleteJsonConfig; // 别名
+
+  const triggerAllQueries = async () => {
+    try {
+      const response = await fetch('/api/billing-azure/trigger-json-query', {
+        method: 'POST',
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        alert('所有查询已开始执行');
+        await fetchJsonConfigs(); // 刷新配置列表
+      } else {
+        setConfigsError(data.error || data.message || '执行失败');
+      }
+    } catch (err: any) {
+      setConfigsError('网络错误: ' + err.message);
+    }
+  };
+
   const openConfigDialog = (config?: JsonBillingConfig) => {
+    console.log('🔧 打开配置对话框:', config ? '编辑模式' : '添加模式');
+    console.log('🔧 当前configDialogOpen状态:', configDialogOpen);
+    console.log('🔧 函数被调用，参数:', config);
+
     if (config) {
       setEditingConfig(config);
       setConfigForm({
@@ -512,7 +652,9 @@ const AzureBillingUpload: React.FC = () => {
       setEditingConfig(null);
       resetConfigForm();
     }
+    console.log('📝 设置对话框状态为打开');
     setConfigDialogOpen(true);
+    console.log('📝 对话框状态已设置为true');
   };
 
   const resetConfigForm = () => {
@@ -575,16 +717,33 @@ const AzureBillingUpload: React.FC = () => {
     }
   };
 
+  // 使用useCallback稳定函数引用
+  const stableFetchHistory = useCallback(async () => {
+    await fetchHistory();
+  }, [filterFileName, filterStartDate, filterEndDate, currentPage, pageSize]);
+
+  const stableFetchJsonConfigs = useCallback(async () => {
+    await fetchJsonConfigs();
+  }, []);
+
   // 当筛选条件或分页改变时重新获取数据
   useEffect(() => {
     let isMounted = true; // 防止组件卸载后的状态更新
+    let timeoutId: NodeJS.Timeout;
 
     const loadData = async () => {
       try {
-        if (tabValue === 1 && isMounted) {
-          await fetchHistory();
+        if (tabValue === 0 && isMounted) {
+          // 定时配置管理标签页 - 延迟加载避免与用户交互冲突
+          timeoutId = setTimeout(async () => {
+            if (isMounted) {
+              await stableFetchJsonConfigs();
+            }
+          }, 100);
+        } else if (tabValue === 1 && isMounted) {
+          await stableFetchHistory();
         } else if (tabValue === 2 && isMounted) {
-          await fetchJsonConfigs(); // 当切换到JSON配置标签页时加载配置
+          await stableFetchJsonConfigs(); // 当切换到手动查询标签页时加载配置
         }
       } catch (error) {
         if (isMounted) {
@@ -598,8 +757,11 @@ const AzureBillingUpload: React.FC = () => {
     // 清理函数
     return () => {
       isMounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     };
-  }, [tabValue, filterFileName, filterStartDate, filterEndDate, currentPage, pageSize]);
+  }, [tabValue, stableFetchHistory, stableFetchJsonConfigs]);
 
   // 初始化加载数据
   useEffect(() => {
@@ -607,12 +769,14 @@ const AzureBillingUpload: React.FC = () => {
 
     const initializeData = async () => {
       try {
+        console.log('🚀 初始化数据加载...');
         if (isMounted) {
-          await Promise.all([fetchHistory(), fetchJsonConfigs()]);
+          await Promise.all([fetchHistory(), stableFetchJsonConfigs()]);
+          console.log('✅ 初始化数据加载完成');
         }
       } catch (error) {
         if (isMounted) {
-          console.error('Failed to initialize data:', error);
+          console.error('❌ 初始化数据失败:', error);
         }
       }
     };
@@ -623,7 +787,7 @@ const AzureBillingUpload: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [stableFetchJsonConfigs]);
 
 
 
@@ -802,167 +966,273 @@ const AzureBillingUpload: React.FC = () => {
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
       <Typography variant="h4" gutterBottom align="center">
-        Azure 账单查询
+        Azure 账单管理中心
       </Typography>
       <Typography variant="body1" color="textSecondary" align="center" sx={{ mb: 3 }}>
-        上传 Azure 应用程序凭据文件，查询相关的账单信息
+        管理 Azure 账单定时查询配置，自动获取账单数据并保存为JSON记录
       </Typography>
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={tabValue} onChange={handleTabChange} aria-label="billing tabs">
-          <Tab label="账单查询" />
-          <Tab label="历史记录" icon={<History />} iconPosition="start" />
-          <Tab label="定时配置" icon={<Schedule />} iconPosition="start" />
+          <Tab label="定时配置管理" icon={<Schedule />} iconPosition="start" />
+          <Tab label="查询历史记录" icon={<History />} iconPosition="start" />
+          <Tab label="手动查询" />
         </Tabs>
       </Box>
 
-      {/* 账单查询标签页 */}
+      {/* 定时配置管理标签页 */}
       {tabValue === 0 && (
-        <Card>
-          <CardContent>
-            <Box sx={{ mb: 3 }}>
+        <Box>
+          {/* 配置管理工具栏 */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6">
+                  <Schedule sx={{ mr: 1, verticalAlign: 'middle' }} />
+                  JSON定时查询配置
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<Add />}
+                    onClick={() => {
+                      console.log('🖱️ 添加配置按钮被点击');
+                      openConfigDialog();
+                    }}
+                  >
+                    添加配置
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<PlayArrow />}
+                    onClick={triggerAllQueries}
+                    disabled={configsLoading}
+                  >
+                    执行所有查询
+                  </Button>
+                </Box>
+              </Box>
+
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                管理Azure账单自动查询配置。每个JSON配置将定时执行账单查询并保存结果。
+              </Typography>
+
+              {configsError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {configsError}
+                </Alert>
+              )}
+
               <Button
                 variant="outlined"
-                onClick={fetchExample}
-                sx={{ mb: 2 }}
+                onClick={fetchJsonConfigs}
+                startIcon={<Refresh />}
+                disabled={configsLoading}
+                sx={{ mr: 1 }}
               >
-                查看凭据文件格式示例
+                刷新配置
               </Button>
+            </CardContent>
+          </Card>
 
-              <Collapse in={showExample}>
-                {example && (
-                  <Alert severity="info" sx={{ mb: 2 }}>
-                    <Typography variant="subtitle2" gutterBottom>
-                      凭据文件格式示例:
-                    </Typography>
-                    <pre style={{ fontSize: '12px', margin: 0 }}>
-                      {JSON.stringify(example.example, null, 2)}
-                    </pre>
-                    <Typography variant="body2" sx={{ mt: 1 }}>
-                      使用说明:
-                    </Typography>
-                    <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
-                      {example.instructions.map((instruction, index) => (
-                        <li key={index} style={{ fontSize: '14px' }}>
-                          {instruction}
-                        </li>
-                      ))}
-                    </ul>
-                  </Alert>
-                )}
-              </Collapse>
-            </Box>
+          {/* 配置列表 */}
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                <Assessment sx={{ mr: 1, verticalAlign: 'middle' }} />
+                配置列表 ({jsonConfigs.length} 个配置)
+              </Typography>
 
-            <Divider sx={{ my: 2 }} />
-
-            <Box sx={{ mb: 3 }}>
-              <Button
-                component="label"
-                variant="contained"
-                startIcon={<CloudUpload />}
-                sx={{ mb: 2 }}
-              >
-                选择凭据文件
-                <VisuallyHiddenInput
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleFileChange}
-                />
-              </Button>
-
-              {file && (
-                <Alert severity="success" sx={{ mb: 2 }}>
-                  <Typography variant="body2">
-                    已选择文件: {file.name} ({(file.size / 1024).toFixed(1)} KB)
+              {configsLoading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                  <CircularProgress />
+                </Box>
+              ) : jsonConfigs.length === 0 ? (
+                <Box sx={{ textAlign: 'center', p: 3 }}>
+                  <Typography variant="body1" color="textSecondary">
+                    暂无配置，点击"添加配置"开始创建
                   </Typography>
-                </Alert>
-              )}
-            </Box>
-
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={handleUpload}
-              disabled={!file || loading}
-              fullWidth
-              sx={{ mb: 2 }}
-            >
-              {loading ? (
-                <>
-                  <CircularProgress size={20} sx={{ mr: 1 }} />
-                  查询中...
-                </>
+                </Box>
               ) : (
-                '开始查询账单'
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {jsonConfigs.map((config) => (
+                    <Card key={config.id} variant="outlined">
+                      <CardContent>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="h6" gutterBottom>
+                              {config.configName}
+                            </Typography>
+                            <Typography variant="body2" color="textSecondary" gutterBottom>
+                              文件: {config.fileName}
+                            </Typography>
+                            <Typography variant="body2" color="textSecondary" gutterBottom>
+                              应用ID: {config.appId}
+                            </Typography>
+                            <Typography variant="body2" color="textSecondary" gutterBottom>
+                              查询间隔: {config.queryIntervalMinutes} 分钟
+                            </Typography>
+                            <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                              <Chip
+                                label={config.status === 'active' ? '活跃' : config.status === 'inactive' ? '非活跃' : '错误'}
+                                color={config.status === 'active' ? 'success' : config.status === 'inactive' ? 'default' : 'error'}
+                                size="small"
+                              />
+                              <Chip
+                                label={config.autoQueryEnabled ? '自动查询' : '手动查询'}
+                                color={config.autoQueryEnabled ? 'primary' : 'default'}
+                                size="small"
+                              />
+                            </Box>
+                          </Box>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, ml: 2 }}>
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              startIcon={<PlayArrow />}
+                              onClick={() => config.id && executeConfig(config.id)}
+                              disabled={!config.id}
+                            >
+                              执行查询
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              startIcon={<Visibility />}
+                              onClick={() => config.id && toggleConfigHistory(config.id)}
+                              disabled={!config.id}
+                            >
+                              查看历史
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              startIcon={<Edit />}
+                              onClick={() => openConfigDialog(config)}
+                            >
+                              编辑
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              color="error"
+                              startIcon={<Delete />}
+                              onClick={() => config.id && deleteConfig(config.id)}
+                              disabled={!config.id}
+                            >
+                              删除
+                            </Button>
+                          </Box>
+                        </Box>
+
+                        {config.lastQueryTime && (
+                          <Box sx={{ mt: 2, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                            <Typography variant="caption" color="textSecondary">
+                              上次查询: {new Date(config.lastQueryTime).toLocaleString()}
+                            </Typography>
+                            {config.nextQueryTime && (
+                              <Typography variant="caption" color="textSecondary" sx={{ ml: 2 }}>
+                                下次查询: {new Date(config.nextQueryTime).toLocaleString()}
+                              </Typography>
+                            )}
+                          </Box>
+                        )}
+
+                        {/* 历史记录展开区域 */}
+                        {config.id && (
+                          <Collapse in={expandedConfigs.has(config.id)}>
+                            <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                                <History sx={{ mr: 1, fontSize: 20 }} />
+                                <Typography variant="subtitle2">
+                                  查询历史记录
+                                </Typography>
+                                {configHistoryLoading.has(config.id) && (
+                                  <CircularProgress size={16} sx={{ ml: 1 }} />
+                                )}
+                              </Box>
+
+                              {configHistories.has(config.id) ? (
+                                <Box>
+                                  {configHistories.get(config.id)?.length === 0 ? (
+                                    <Typography variant="body2" color="textSecondary" sx={{ textAlign: 'center', py: 2 }}>
+                                      暂无查询历史记录
+                                    </Typography>
+                                  ) : (
+                                    <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 300 }}>
+                                      <Table size="small">
+                                        <TableHead>
+                                          <TableRow>
+                                            <TableCell>查询时间</TableCell>
+                                            <TableCell>状态</TableCell>
+                                            <TableCell>总费用</TableCell>
+                                            <TableCell>错误信息</TableCell>
+                                          </TableRow>
+                                        </TableHead>
+                                        <TableBody>
+                                          {configHistories.get(config.id)?.map((record) => (
+                                            <TableRow key={record.id}>
+                                              <TableCell>
+                                                <Typography variant="caption">
+                                                  {new Date(record.queryDate).toLocaleString()}
+                                                </Typography>
+                                              </TableCell>
+                                              <TableCell>
+                                                <Chip
+                                                  label={record.queryStatus === 'success' ? '成功' :
+                                                         record.queryStatus === 'failed' ? '失败' :
+                                                         record.queryStatus === 'no_subscription' ? '无订阅' : '未知'}
+                                                  color={record.queryStatus === 'success' ? 'success' : 'error'}
+                                                  size="small"
+                                                />
+                                              </TableCell>
+                                              <TableCell>
+                                                <Typography variant="caption">
+                                                  {record.totalCost ? `${record.totalCost} ${record.currency || 'USD'}` : '-'}
+                                                </Typography>
+                                              </TableCell>
+                                              <TableCell>
+                                                <Typography variant="caption" color="error">
+                                                  {record.errorMessage || '-'}
+                                                </Typography>
+                                              </TableCell>
+                                            </TableRow>
+                                          ))}
+                                        </TableBody>
+                                      </Table>
+                                    </TableContainer>
+                                  )}
+
+                                  <Box sx={{ mt: 1, textAlign: 'center' }}>
+                                    <Button
+                                      size="small"
+                                      variant="text"
+                                      onClick={() => setTabValue(1)}
+                                      sx={{ fontSize: '0.75rem' }}
+                                    >
+                                      查看完整历史记录
+                                    </Button>
+                                  </Box>
+                                </Box>
+                              ) : (
+                                <Typography variant="body2" color="textSecondary" sx={{ textAlign: 'center', py: 2 }}>
+                                  正在加载历史记录...
+                                </Typography>
+                              )}
+                            </Box>
+                          </Collapse>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </Box>
               )}
-            </Button>
-
-            {error && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                <Typography variant="body2">{error}</Typography>
-              </Alert>
-            )}
-
-            {result && (
-              <Box>
-                <Alert severity="success" sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">
-                      {result.message}
-                    </Typography>
-                    <IconButton
-                      size="small"
-                      onClick={() => setShowDetails(!showDetails)}
-                    >
-                      {showDetails ? <ExpandLess /> : <ExpandMore />}
-                    </IconButton>
-                  </Box>
-                </Alert>
-
-                {result.credentials_info && (
-                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-                    <Typography variant="subtitle2" gutterBottom>
-                      凭据信息:
-                    </Typography>
-                    <Typography variant="body2">
-                      应用ID: {result.credentials_info.appId}
-                    </Typography>
-                    <Typography variant="body2">
-                      显示名称: {result.credentials_info.displayName}
-                    </Typography>
-                    <Typography variant="body2">
-                      租户ID: {result.credentials_info.tenant}
-                    </Typography>
-                  </Paper>
-                )}
-
-                {result.result?.data && renderBillingData(result.result.data)}
-
-                <Collapse in={showDetails}>
-                  {result.result?.output && (
-                    <Paper elevation={1} sx={{ p: 2, mt: 2 }}>
-                      <Typography variant="subtitle2" gutterBottom>
-                        详细输出:
-                      </Typography>
-                      <pre style={{
-                        fontSize: '12px',
-                        whiteSpace: 'pre-wrap',
-                        maxHeight: '300px',
-                        overflow: 'auto',
-                        margin: 0
-                      }}>
-                        {result.result.output}
-                      </pre>
-                    </Paper>
-                  )}
-                </Collapse>
-              </Box>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </Box>
       )}
 
-      {/* 历史记录标签页 */}
+      {/* 查询历史记录标签页 */}
       {tabValue === 1 && (
         <Box>
           {/* 筛选条件 */}
@@ -970,7 +1240,10 @@ const AzureBillingUpload: React.FC = () => {
             <CardContent>
               <Typography variant="h6" gutterBottom>
                 <FilterList sx={{ mr: 1, verticalAlign: 'middle' }} />
-                筛选条件
+                查询历史筛选
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                查看和筛选JSON配置的账单查询历史记录
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
                 <TextField
@@ -1134,295 +1407,313 @@ const AzureBillingUpload: React.FC = () => {
         </Box>
       )}
 
-      {/* JSON配置管理标签页 */}
+      {/* 手动查询标签页 */}
       {tabValue === 2 && (
         <Box>
-          {/* 配置管理工具栏 */}
+          {/* 手动查询工具栏 */}
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6">
-                  <Schedule sx={{ mr: 1, verticalAlign: 'middle' }} />
-                  JSON定时查询配置
-                </Typography>
-                <Button
-                  variant="contained"
-                  startIcon={<Add />}
-                  onClick={() => openConfigDialog()}
-                >
-                  添加配置
-                </Button>
-              </Box>
-
-              {configsError && (
-                <Alert severity="error" sx={{ mb: 2 }}>
-                  {configsError}
-                </Alert>
-              )}
-
-              <Button
-                variant="outlined"
-                onClick={fetchJsonConfigs}
-                startIcon={<Refresh />}
-                disabled={configsLoading}
-                sx={{ mr: 1 }}
-              >
-                刷新
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* 配置列表 */}
-          <Card>
-            <CardContent>
               <Typography variant="h6" gutterBottom>
-                配置列表
+                <CloudUpload sx={{ mr: 1, verticalAlign: 'middle' }} />
+                手动账单查询
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                上传Azure凭据文件进行一次性账单查询，不保存为定时配置
               </Typography>
 
-              {configsLoading ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-                  <CircularProgress />
-                </Box>
-              ) : (
-                <TableContainer component={Paper} variant="outlined">
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>配置名称</TableCell>
-                        <TableCell>文件名</TableCell>
-                        <TableCell>显示名称</TableCell>
-                        <TableCell>状态</TableCell>
-                        <TableCell>自动查询</TableCell>
-                        <TableCell>查询间隔</TableCell>
-                        <TableCell>下次查询时间</TableCell>
-                        <TableCell>操作</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {jsonConfigs.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={8} align="center">
-                            <Typography variant="body2" color="textSecondary">
-                              暂无配置
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        jsonConfigs.map((config) => (
-                          <TableRow key={config.id}>
-                            <TableCell>
-                              <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
-                                {config.configName}
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                {config.fileName}
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Typography variant="body2">
-                                {config.displayName}
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              {getStatusChip(config.status)}
-                            </TableCell>
-                            <TableCell>
-                              <Chip
-                                label={config.autoQueryEnabled ? '启用' : '禁用'}
-                                color={config.autoQueryEnabled ? 'success' : 'default'}
-                                size="small"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Typography variant="body2">
-                                {config.queryIntervalMinutes}分钟
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Typography variant="body2">
-                                {config.nextQueryTime ? formatDateString(config.nextQueryTime) : '未设置'}
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Box sx={{ display: 'flex', gap: 1 }}>
-                                <IconButton
-                                  size="small"
-                                  onClick={() => executeJsonConfig(config.id!)}
-                                  title="立即执行"
-                                >
-                                  <PlayArrow />
-                                </IconButton>
-                                <IconButton
-                                  size="small"
-                                  onClick={() => openConfigDialog(config)}
-                                  title="编辑"
-                                >
-                                  <Edit />
-                                </IconButton>
-                                <IconButton
-                                  size="small"
-                                  onClick={() => deleteJsonConfig(config.id!)}
-                                  title="删除"
-                                  color="error"
-                                >
-                                  <Delete />
-                                </IconButton>
-                              </Box>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+              <Box sx={{ mb: 3 }}>
+                <Button
+                  variant="outlined"
+                  onClick={fetchExample}
+                  sx={{ mb: 2 }}
+                >
+                  查看凭据文件格式示例
+                </Button>
+
+                <Collapse in={showExample}>
+                  {example && (
+                    <Alert severity="info" sx={{ mb: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        凭据文件格式示例:
+                      </Typography>
+                      <pre style={{ fontSize: '12px', margin: 0 }}>
+                        {JSON.stringify(example.example, null, 2)}
+                      </pre>
+                      <Typography variant="body2" sx={{ mt: 1 }}>
+                        使用说明:
+                      </Typography>
+                      <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+                        {example.instructions.map((instruction, index) => (
+                          <li key={index} style={{ fontSize: '14px' }}>
+                            {instruction}
+                          </li>
+                        ))}
+                      </ul>
+                    </Alert>
+                  )}
+                </Collapse>
+              </Box>
+
+              <Divider sx={{ my: 2 }} />
+
+              <Box sx={{ mb: 3 }}>
+                <Button
+                  component="label"
+                  variant="contained"
+                  startIcon={<CloudUpload />}
+                  sx={{ mb: 2 }}
+                >
+                  选择凭据文件
+                  <VisuallyHiddenInput
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleFileChange}
+                  />
+                </Button>
+
+                {file && (
+                  <Alert severity="success" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                      已选择文件: {file.name} ({(file.size / 1024).toFixed(1)} KB)
+                    </Typography>
+                  </Alert>
+                )}
+              </Box>
+
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleUpload}
+                disabled={!file || loading}
+                fullWidth
+                sx={{ mb: 2 }}
+              >
+                {loading ? (
+                  <>
+                    <CircularProgress size={20} sx={{ mr: 1 }} />
+                    查询中...
+                  </>
+                ) : (
+                  '开始查询账单'
+                )}
+              </Button>
+
+              {error && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  <Typography variant="body2">{error}</Typography>
+                </Alert>
               )}
             </CardContent>
           </Card>
 
-          {/* 配置对话框 */}
-          <Dialog
-            open={configDialogOpen}
-            onClose={() => setConfigDialogOpen(false)}
-            maxWidth="md"
-            fullWidth
-          >
-            <DialogTitle>
-              {editingConfig ? '编辑配置' : '添加配置'}
-            </DialogTitle>
-            <DialogContent>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-                {/* JSON文件上传区域 */}
-                {!editingConfig && (
-                  <Card sx={{ mb: 2, bgcolor: 'background.default' }}>
-                    <CardContent>
-                      <Typography variant="h6" gutterBottom>
-                        上传JSON配置文件
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        上传Azure凭据JSON文件，系统将自动解析并填充配置信息
-                      </Typography>
-                      <Button
-                        component="label"
-                        variant="outlined"
-                        startIcon={<CloudUpload />}
-                        sx={{ mb: 1 }}
-                      >
-                        选择JSON文件
-                        <VisuallyHiddenInput
-                          type="file"
-                          accept=".json"
-                          onChange={handleJsonFileUpload}
-                        />
-                      </Button>
-                      {uploadedFileName && (
-                        <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>
-                          已上传: {uploadedFileName}
-                        </Typography>
-                      )}
-                    </CardContent>
-                  </Card>
+          {/* 查询结果 */}
+          {result && (
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  <Assessment sx={{ mr: 1, verticalAlign: 'middle' }} />
+                  查询结果
+                </Typography>
+
+                <Alert severity="success" sx={{ mb: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Typography variant="body2">
+                      {result.message}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowDetails(!showDetails)}
+                    >
+                      {showDetails ? <ExpandLess /> : <ExpandMore />}
+                    </IconButton>
+                  </Box>
+                </Alert>
+
+                {result.credentials_info && (
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      凭据信息:
+                    </Typography>
+                    <Typography variant="body2">
+                      应用ID: {result.credentials_info.appId}
+                    </Typography>
+                    <Typography variant="body2">
+                      显示名称: {result.credentials_info.displayName}
+                    </Typography>
+                    <Typography variant="body2">
+                      租户ID: {result.credentials_info.tenant}
+                    </Typography>
+                  </Paper>
                 )}
 
-                <TextField
-                  label="配置名称"
-                  value={configForm.configName || ''}
-                  onChange={(e) => setConfigForm({ ...configForm, configName: e.target.value })}
-                  fullWidth
-                  required
-                />
-                <TextField
-                  label="JSON文件名"
-                  value={configForm.fileName || ''}
-                  onChange={(e) => setConfigForm({ ...configForm, fileName: e.target.value })}
-                  fullWidth
-                  required
-                  helperText="上传文件后会自动填充"
-                />
-                <TextField
-                  label="文件路径"
-                  value={configForm.filePath || ''}
-                  onChange={(e) => setConfigForm({ ...configForm, filePath: e.target.value })}
-                  fullWidth
-                  required
-                  helperText="上传文件后会自动填充服务器路径"
-                />
-                <TextField
-                  label="应用ID"
-                  value={configForm.appId || ''}
-                  onChange={(e) => setConfigForm({ ...configForm, appId: e.target.value })}
-                  fullWidth
-                  required
-                  helperText="从JSON文件中自动解析"
-                />
-                <TextField
-                  label="租户ID"
-                  value={configForm.tenantId || ''}
-                  onChange={(e) => setConfigForm({ ...configForm, tenantId: e.target.value })}
-                  fullWidth
-                  required
-                  helperText="从JSON文件中自动解析"
-                />
-                <TextField
-                  label="显示名称"
-                  value={configForm.displayName || ''}
-                  onChange={(e) => setConfigForm({ ...configForm, displayName: e.target.value })}
-                  fullWidth
-                  required
-                  helperText="从JSON文件中自动解析"
-                />
-                <TextField
-                  label="密码"
-                  type="password"
-                  value={configForm.password || ''}
-                  onChange={(e) => setConfigForm({ ...configForm, password: e.target.value })}
-                  fullWidth
-                  required
-                  helperText="从JSON文件中自动解析"
-                />
-                <TextField
-                  label="查询间隔（分钟）"
-                  type="number"
-                  value={configForm.queryIntervalMinutes || 60}
-                  onChange={(e) => setConfigForm({ ...configForm, queryIntervalMinutes: parseInt(e.target.value) || 60 })}
-                  fullWidth
-                  slotProps={{ htmlInput: { min: 1, max: 10080 } }}
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={configForm.autoQueryEnabled || false}
-                      onChange={(e) => setConfigForm({ ...configForm, autoQueryEnabled: e.target.checked })}
-                    />
-                  }
-                  label="启用自动查询"
-                />
-                <FormControl fullWidth>
-                  <InputLabel>状态</InputLabel>
-                  <Select
-                    value={configForm.status || 'active'}
-                    onChange={(e) => setConfigForm({ ...configForm, status: e.target.value as 'active' | 'inactive' | 'error' })}
-                    label="状态"
-                  >
-                    <MenuItem value="active">活跃</MenuItem>
-                    <MenuItem value="inactive">停用</MenuItem>
-                    <MenuItem value="error">错误</MenuItem>
-                  </Select>
-                </FormControl>
-              </Box>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setConfigDialogOpen(false)}>
-                取消
-              </Button>
-              <Button onClick={saveJsonConfig} variant="contained">
-                保存
-              </Button>
-            </DialogActions>
-          </Dialog>
+                {result.result?.data && renderBillingData(result.result.data)}
+
+                <Collapse in={showDetails}>
+                  {result.result?.output && (
+                    <Paper elevation={1} sx={{ p: 2, mt: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        详细输出:
+                      </Typography>
+                      <pre style={{
+                        fontSize: '12px',
+                        whiteSpace: 'pre-wrap',
+                        maxHeight: '300px',
+                        overflow: 'auto',
+                        margin: 0
+                      }}>
+                        {result.result.output}
+                      </pre>
+                    </Paper>
+                  )}
+                </Collapse>
+              </CardContent>
+            </Card>
+          )}
+
+
         </Box>
       )}
+
+      {/* 配置对话框 - 放在所有标签页外面，确保在任何标签页都能显示 */}
+      <Dialog
+        open={configDialogOpen}
+        onClose={() => setConfigDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          {editingConfig ? '编辑配置' : '添加配置'}
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+            {/* JSON文件上传区域 */}
+            {!editingConfig && (
+              <Card sx={{ mb: 2, bgcolor: 'background.default' }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    上传JSON配置文件
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    上传Azure凭据JSON文件，系统将自动解析并填充配置信息
+                  </Typography>
+                  <Button
+                    component="label"
+                    variant="outlined"
+                    startIcon={<CloudUpload />}
+                    sx={{ mb: 1 }}
+                  >
+                    选择JSON文件
+                    <VisuallyHiddenInput
+                      type="file"
+                      accept=".json"
+                      onChange={handleJsonFileUpload}
+                    />
+                  </Button>
+                  {uploadedFileName && (
+                    <Typography variant="body2" color="success.main" sx={{ mt: 1 }}>
+                      已上传: {uploadedFileName}
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            <TextField
+              label="配置名称"
+              value={configForm.configName || ''}
+              onChange={(e) => setConfigForm({ ...configForm, configName: e.target.value })}
+              fullWidth
+              required
+            />
+            <TextField
+              label="JSON文件名"
+              value={configForm.fileName || ''}
+              onChange={(e) => setConfigForm({ ...configForm, fileName: e.target.value })}
+              fullWidth
+              required
+              helperText="上传文件后会自动填充"
+            />
+            <TextField
+              label="文件路径"
+              value={configForm.filePath || ''}
+              onChange={(e) => setConfigForm({ ...configForm, filePath: e.target.value })}
+              fullWidth
+              required
+              helperText="上传文件后会自动填充服务器路径"
+            />
+            <TextField
+              label="应用ID"
+              value={configForm.appId || ''}
+              onChange={(e) => setConfigForm({ ...configForm, appId: e.target.value })}
+              fullWidth
+              required
+              helperText="从JSON文件中自动解析"
+            />
+            <TextField
+              label="租户ID"
+              value={configForm.tenantId || ''}
+              onChange={(e) => setConfigForm({ ...configForm, tenantId: e.target.value })}
+              fullWidth
+              required
+              helperText="从JSON文件中自动解析"
+            />
+            <TextField
+              label="显示名称"
+              value={configForm.displayName || ''}
+              onChange={(e) => setConfigForm({ ...configForm, displayName: e.target.value })}
+              fullWidth
+              required
+              helperText="从JSON文件中自动解析"
+            />
+            <TextField
+              label="密码"
+              type="password"
+              value={configForm.password || ''}
+              onChange={(e) => setConfigForm({ ...configForm, password: e.target.value })}
+              fullWidth
+              required
+              helperText="从JSON文件中自动解析"
+            />
+            <TextField
+              label="查询间隔（分钟）"
+              type="number"
+              value={configForm.queryIntervalMinutes || 60}
+              onChange={(e) => setConfigForm({ ...configForm, queryIntervalMinutes: parseInt(e.target.value) || 60 })}
+              fullWidth
+              slotProps={{ htmlInput: { min: 1, max: 10080 } }}
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={configForm.autoQueryEnabled || false}
+                  onChange={(e) => setConfigForm({ ...configForm, autoQueryEnabled: e.target.checked })}
+                />
+              }
+              label="启用自动查询"
+            />
+            <FormControl fullWidth>
+              <InputLabel>状态</InputLabel>
+              <Select
+                value={configForm.status || 'active'}
+                onChange={(e) => setConfigForm({ ...configForm, status: e.target.value as 'active' | 'inactive' | 'error' })}
+                label="状态"
+              >
+                <MenuItem value="active">活跃</MenuItem>
+                <MenuItem value="inactive">停用</MenuItem>
+                <MenuItem value="error">错误</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfigDialogOpen(false)}>
+            取消
+          </Button>
+          <Button onClick={saveJsonConfig} variant="contained">
+            保存
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

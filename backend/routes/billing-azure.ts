@@ -674,9 +674,39 @@ router.post('/json-configs', async (req, res) => {
       }
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error saving JSON config:', error);
-    return res.status(500).json({ 
+
+    // 处理数据库唯一约束错误
+    if (error.code === 'ER_DUP_ENTRY') {
+      if (error.sqlMessage && error.sqlMessage.includes('unique_config_name')) {
+        return res.status(400).json({
+          error: 'Duplicate config name',
+          message: '配置名称已存在，请使用不同的配置名称'
+        });
+      }
+      if (error.sqlMessage && error.sqlMessage.includes('unique_file_name')) {
+        return res.status(400).json({
+          error: 'Duplicate file name',
+          message: '文件名已存在，请使用不同的文件名'
+        });
+      }
+      return res.status(400).json({
+        error: 'Duplicate entry',
+        message: '数据已存在，请检查配置名称或文件名'
+      });
+    }
+
+    // 处理其他数据库错误
+    if (error.code && error.code.startsWith('ER_')) {
+      return res.status(400).json({
+        error: 'Database error',
+        message: '数据库操作失败，请检查输入数据'
+      });
+    }
+
+    // 处理通用错误
+    return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to save JSON config'
     });

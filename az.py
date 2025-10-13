@@ -73,10 +73,14 @@ def get_speech_service_costs(tenant_id, client_id, client_secret, subscription_i
         'Content-Type': 'application/json'
     }
     
-    # 查询当月数据
-    start_date = datetime.now().replace(day=1).strftime('%Y-%m-%d')
+    # 查询过去11个月的数据
     end_date = datetime.now().strftime('%Y-%m-%d')
-    
+    # 计算11个月前的日期
+    start_date = (datetime.now() - timedelta(days=330)).strftime('%Y-%m-%d')  # 约11个月
+
+    print(f"📅 查询时间范围: {start_date} 到 {end_date} (约11个月)")
+    print("-" * 60)
+
     # 专门针对Speech服务的查询
     query_body = {
         "type": "ActualCost",

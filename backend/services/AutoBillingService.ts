@@ -10,6 +10,7 @@ import mysql from 'mysql2/promise';
 import logger from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawn } from 'child_process';
 
 export interface JsonCredential {
   appId: string;
@@ -1220,7 +1221,7 @@ export class AutoBillingService {
   }
 
   /**
-   * 执行JSON配置查询
+   * 执行JSON配置查询 - 使用Python脚本
    */
   async executeJsonConfigQuery(config: JsonBillingConfig): Promise<void> {
     // 安全日志：不记录敏感信息
@@ -1232,7 +1233,7 @@ export class AutoBillingService {
         throw new Error(`File path is undefined for config: ${config.configName}`);
       }
 
-      // 读取JSON文件
+      // 读取JSON文件验证格式
       const content = fs.readFileSync(config.filePath, 'utf8');
       const credential = JSON.parse(content) as JsonCredential;
 
@@ -1240,8 +1241,8 @@ export class AutoBillingService {
         throw new Error('Invalid credential format');
       }
 
-      // 执行账单查询
-      await this.queryBillingForCredential(credential, config.fileName, config.filePath, new Date(), config.configName);
+      // 调用Python脚本执行查询
+      await this.runAzureBillingScript(config.filePath, config.fileName, config.configName);
 
       logger.info(`Successfully executed JSON config query for: ${config.configName}`);
 
@@ -2024,6 +2025,128 @@ export class AutoBillingService {
       };
     } finally {
       connection.release();
+    }
+  }
+
+  /**
+   * 运行Azure账单查询Python脚本
+   */
+  private async runAzureBillingScript(credentialsPath: string, fileName: string, configName?: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const scriptPath = path.join(process.cwd(), 'az.py');
+      logger.info(`Running Azure billing script: ${scriptPath} with credentials: ${credentialsPath}`);
+
+      const pythonProcess = spawn('python3', [scriptPath, credentialsPath], {
+        cwd: process.cwd()
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+        logger.info(`Python script output: ${data.toString().trim()}`);
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+        logger.warn(`Python script stderr: ${data.toString().trim()}`);
+      });
+
+      pythonProcess.on('close', async (code) => {
+        if (code === 0) {
+          logger.info(`Python script completed successfully for ${fileName}`);
+
+          // 查找生成的汇总文件
+          const summaryFile = path.join(process.cwd(), 'uploads', 'speech_service_costs_summary.json');
+          if (fs.existsSync(summaryFile)) {
+            try {
+              const summaryData = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));
+
+              // 解析结果并保存到数据库
+              await this.processPythonScriptResult(summaryData, fileName, credentialsPath, configName);
+
+              logger.info(`Successfully processed Python script result for ${fileName}`);
+              resolve();
+            } catch (parseError) {
+              logger.error(`Failed to parse Python script result: ${parseError}`);
+              reject(new Error(`Failed to parse script result: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`));
+            }
+          } else {
+            logger.warn(`Summary file not found for ${fileName}, but script completed successfully`);
+            resolve(); // 即使没有汇总文件也认为成功，可能是没有成本数据
+          }
+        } else {
+          logger.error(`Python script failed for ${fileName} (exit code: ${code})`);
+          logger.error(`Script stdout: ${stdout}`);
+          logger.error(`Script stderr: ${stderr}`);
+          reject(new Error(`Script execution failed (exit code: ${code})\nStdout: ${stdout}\nStderr: ${stderr}`));
+        }
+      });
+
+      pythonProcess.on('error', (error: any) => {
+        logger.error(`Failed to start Python script: ${error.message}`);
+        reject(new Error(`Failed to start Python script: ${error.message}`));
+      });
+    });
+  }
+
+  /**
+   * 处理Python脚本的结果并保存到数据库
+   */
+  private async processPythonScriptResult(summaryData: any, fileName: string, credentialsPath: string, configName?: string): Promise<void> {
+    try {
+      // 读取凭据文件获取基本信息
+      const credentialContent = fs.readFileSync(credentialsPath, 'utf8');
+      const credential = JSON.parse(credentialContent) as JsonCredential;
+
+      let totalCost = 0;
+      let currency = 'USD';
+      let hasData = false;
+
+      // 遍历所有订阅的成本数据
+      for (const [subscriptionId, subscriptionData] of Object.entries(summaryData as any)) {
+        if (subscriptionData && typeof subscriptionData === 'object' && 'cost_data' in subscriptionData) {
+          const costData = (subscriptionData as any).cost_data;
+          if (costData?.properties?.rows && Array.isArray(costData.properties.rows)) {
+            hasData = true;
+            costData.properties.rows.forEach((row: any[]) => {
+              if (Array.isArray(row) && row.length > 0) {
+                const cost = parseFloat(row[0]) || 0;
+                totalCost += cost;
+                if (row.length > 5 && row[5]) {
+                  currency = row[5];
+                }
+              }
+            });
+          }
+        }
+      }
+
+      // 保存查询记录到数据库
+      const billingRecord = {
+        fileName: path.basename(fileName),
+        configName,
+        filePath: credentialsPath,
+        appId: credential.appId,
+        tenantId: credential.tenant,
+        displayName: credential.displayName,
+        queryDate: new Date(),
+        subscriptionId: Object.keys(summaryData)[0] || undefined, // 使用第一个订阅ID
+        totalCost: totalCost > 0 ? totalCost : undefined,
+        currency: totalCost > 0 ? currency : undefined,
+        billingData: JSON.stringify(summaryData),
+        queryStatus: hasData ? 'success' : 'no_subscription' as 'success' | 'failed' | 'no_subscription',
+        errorMessage: hasData ? undefined : 'No billing data found',
+        lastModified: new Date()
+      };
+
+      await this.saveJsonBillingRecord(billingRecord);
+      logger.info(`Saved billing record for ${fileName}: ${totalCost} ${currency}`);
+
+    } catch (error) {
+      logger.error(`Failed to process Python script result: ${error}`);
+      throw error;
     }
   }
 }
