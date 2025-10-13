@@ -1,0 +1,157 @@
+{
+  "72902ce4-2f5b-454c-b153-6a067243dbc2": {
+    "subscription_name": "Azure subscription 1",
+    "subscription_id": "72902ce4-2f5b-454c-b153-6a067243dbc2",
+    "cost_data": {
+      "id": "subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/providers/Microsoft.CostManagement/query/5ec3f466-b7ab-45c7-867e-4f0d018efdc1",
+      "name": "5ec3f466-b7ab-45c7-867e-4f0d018efdc1",
+      "type": "Microsoft.CostManagement/query",
+      "location": null,
+      "sku": null,
+      "eTag": null,
+      "properties": {
+        "nextLink": null,
+        "columns": [
+          {
+            "name": "PreTaxCost",
+            "type": "Number"
+          },
+          {
+            "name": "UsageQuantity",
+            "type": "Number"
+          },
+          {
+            "name": "UsageDate",
+            "type": "Number"
+          },
+          {
+            "name": "ResourceId",
+            "type": "String"
+          },
+          {
+            "name": "Meter",
+            "type": "String"
+          },
+          {
+            "name": "Currency",
+            "type": "String"
+          }
+        ],
+        "rows": [
+          [
+            0.0006,
+            4e-05,
+            20250921,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Neural Text To Speech Characters",
+            "USD"
+          ],
+          [
+            1.27805555555556,
+            1.27805555555556,
+            20250921,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Speech To Text",
+            "USD"
+          ],
+          [
+            0.0,
+            1.1e-05,
+            20250921,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/zxasd/providers/microsoft.cognitiveservices/accounts/aszdc",
+            "S1 Translation Transactions - Free",
+            "USD"
+          ],
+          [
+            0.746111111111111,
+            0.746111111111111,
+            20250923,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Speech To Text",
+            "USD"
+          ],
+          [
+            0.0,
+            1.1e-05,
+            20250923,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/zxasd/providers/microsoft.cognitiveservices/accounts/aszdc",
+            "S1 Translation Transactions - Free",
+            "USD"
+          ],
+          [
+            0.0006,
+            4e-05,
+            20250924,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Neural Text To Speech Characters",
+            "USD"
+          ],
+          [
+            2.355,
+            2.355,
+            20250924,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Speech To Text",
+            "USD"
+          ],
+          [
+            0.0,
+            0.028628,
+            20250924,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/zxasd/providers/microsoft.cognitiveservices/accounts/aszdc",
+            "S1 Translation Transactions - Free",
+            "USD"
+          ],
+          [
+            0.0006,
+            4e-05,
+            20250925,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Neural Text To Speech Characters",
+            "USD"
+          ],
+          [
+            0.124444444444444,
+            0.124444444444444,
+            20250925,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Speech To Text",
+            "USD"
+          ],
+          [
+            0.0006,
+            4e-05,
+            20250927,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Neural Text To Speech Characters",
+            "USD"
+          ],
+          [
+            0.0,
+            1.1e-05,
+            20250927,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/zxasd/providers/microsoft.cognitiveservices/accounts/aszdc",
+            "S1 Translation Transactions - Free",
+            "USD"
+          ],
+          [
+            0.0006,
+            4e-05,
+            20250930,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Neural Text To Speech Characters",
+            "USD"
+          ],
+          [
+            4.57138888888889,
+            4.57138888888889,
+            20250930,
+            "/subscriptions/72902ce4-2f5b-454c-b153-6a067243dbc2/resourcegroups/12edrf/providers/microsoft.cognitiveservices/accounts/xcdfg",
+            "S1 Speech To Text",
+            "USD"
+          ]
+        ]
+      }
+    }
+  }
+}

@@ -56,7 +56,10 @@ import {
   Assessment,
   Visibility,
   KeyboardArrowDown,
-  KeyboardArrowUp
+  KeyboardArrowUp,
+  Close,
+  Info,
+  CalendarToday
 } from '@mui/icons-material';
 
 const VisuallyHiddenInput = styled('input')({
@@ -210,6 +213,10 @@ const AzureBillingUpload: React.FC = () => {
   const [expandedConfigs, setExpandedConfigs] = useState<Set<number>>(new Set());
   const [configHistories, setConfigHistories] = useState<Map<number, JsonBillingHistoryRecord[]>>(new Map());
   const [configHistoryLoading, setConfigHistoryLoading] = useState<Set<number>>(new Set());
+
+  // 详细账单查看状态
+  const [billingDetailDialogOpen, setBillingDetailDialogOpen] = useState(false);
+  const [selectedBillingRecord, setSelectedBillingRecord] = useState<JsonBillingHistoryRecord | null>(null);
   const [configForm, setConfigForm] = useState<Partial<JsonBillingConfig>>({
     configName: '',
     fileName: '',
@@ -607,6 +614,19 @@ const AzureBillingUpload: React.FC = () => {
     }
   };
 
+  // 打开详细账单查看
+  const openBillingDetail = (record: JsonBillingHistoryRecord) => {
+    console.log('🔍 打开详细账单查看:', record);
+    setSelectedBillingRecord(record);
+    setBillingDetailDialogOpen(true);
+  };
+
+  // 关闭详细账单查看
+  const closeBillingDetail = () => {
+    setBillingDetailDialogOpen(false);
+    setSelectedBillingRecord(null);
+  };
+
   // 添加缺失的函数
   const executeConfig = executeJsonConfig; // 别名
   const deleteConfig = deleteJsonConfig; // 别名
@@ -810,38 +830,68 @@ const AzureBillingUpload: React.FC = () => {
     return dateStr;
   };
 
+  // 解析账单数据的通用函数
+  const parseBillingData = (billingDataStr: string) => {
+    try {
+      const data = typeof billingDataStr === 'string' ? JSON.parse(billingDataStr) : billingDataStr;
+
+      let totalCost = 0;
+      const subscriptions = Object.keys(data);
+      const resourceNames = new Set<string>();
+      const serviceDetails: any[] = [];
+      const dailyCosts = new Map<string, number>();
+
+      subscriptions.forEach(subscriptionId => {
+        const subscription = data[subscriptionId];
+        if (subscription.cost_data?.properties?.rows) {
+          subscription.cost_data.properties.rows.forEach((row: any[]) => {
+            const [cost, usage, date, resourceId, meter, currency] = row;
+            totalCost += cost;
+            const { resourceGroup, resourceName } = parseResourceId(resourceId);
+            resourceNames.add(resourceName);
+
+            const dateStr = formatDate(date);
+            dailyCosts.set(dateStr, (dailyCosts.get(dateStr) || 0) + cost);
+
+            serviceDetails.push({
+              subscriptionName: subscription.subscription_name,
+              subscriptionId,
+              cost,
+              usage,
+              date: dateStr,
+              resourceName,
+              resourceGroup,
+              meter,
+              currency
+            });
+          });
+        }
+      });
+
+      const avgDailyCost = dailyCosts.size > 0 ? totalCost / dailyCosts.size : 0;
+
+      return {
+        totalCost,
+        subscriptions,
+        resourceNames: Array.from(resourceNames),
+        serviceDetails,
+        dailyCosts,
+        avgDailyCost,
+        data
+      };
+    } catch (error) {
+      console.error('解析账单数据失败:', error);
+      return null;
+    }
+  };
+
   const renderBillingData = (data: any) => {
     if (!data) return null;
 
-    // 计算汇总数据
-    let totalCost = 0;
-    const subscriptions = Object.keys(data);
-    const resourceNames = new Set<string>();
-    const serviceDetails: any[] = [];
+    const parsed = parseBillingData(typeof data === 'string' ? data : JSON.stringify(data));
+    if (!parsed) return null;
 
-    subscriptions.forEach(subscriptionId => {
-      const subscription = data[subscriptionId];
-      if (subscription.cost_data?.properties?.rows) {
-        subscription.cost_data.properties.rows.forEach((row: any[]) => {
-          const [cost, usage, date, resourceId, meter, currency] = row;
-          totalCost += cost;
-          const { resourceGroup, resourceName } = parseResourceId(resourceId);
-          resourceNames.add(resourceName);
-          serviceDetails.push({
-            subscriptionName: subscription.subscription_name,
-            cost,
-            usage,
-            date: formatDate(date),
-            resourceName,
-            resourceGroup,
-            meter,
-            currency
-          });
-        });
-      }
-    });
-
-    const avgDailyCost = serviceDetails.length > 0 ? totalCost / new Set(serviceDetails.map(s => s.date)).size : 0;
+    const { totalCost, subscriptions, resourceNames, serviceDetails, avgDailyCost } = parsed;
 
     return (
       <Paper elevation={2} sx={{ p: 2, mt: 2 }}>
@@ -859,7 +909,7 @@ const AzureBillingUpload: React.FC = () => {
                   订阅名称
                 </Typography>
                 <Typography variant="h6" component="div">
-                  {subscriptions.length > 0 ? data[subscriptions[0]].subscription_name : 'N/A'}
+                  {subscriptions.length > 0 ? parsed.data[subscriptions[0]].subscription_name : 'N/A'}
                 </Typography>
               </CardContent>
             </Card>
@@ -895,7 +945,7 @@ const AzureBillingUpload: React.FC = () => {
                   资源名称
                 </Typography>
                 <Typography variant="h6" component="div">
-                  {Array.from(resourceNames).join(', ') || 'N/A'}
+                  {resourceNames.join(', ') || 'N/A'}
                 </Typography>
               </CardContent>
             </Card>
@@ -1167,6 +1217,7 @@ const AzureBillingUpload: React.FC = () => {
                                             <TableCell>状态</TableCell>
                                             <TableCell>总费用</TableCell>
                                             <TableCell>错误信息</TableCell>
+                                            <TableCell>操作</TableCell>
                                           </TableRow>
                                         </TableHead>
                                         <TableBody>
@@ -1195,6 +1246,23 @@ const AzureBillingUpload: React.FC = () => {
                                                 <Typography variant="caption" color="error">
                                                   {record.errorMessage || '-'}
                                                 </Typography>
+                                              </TableCell>
+                                              <TableCell>
+                                                {record.queryStatus === 'success' && record.billingData ? (
+                                                  <Button
+                                                    size="small"
+                                                    variant="outlined"
+                                                    startIcon={<Assessment />}
+                                                    onClick={() => openBillingDetail(record)}
+                                                    sx={{ fontSize: '0.7rem', py: 0.5, px: 1 }}
+                                                  >
+                                                    查看详情
+                                                  </Button>
+                                                ) : (
+                                                  <Typography variant="caption" color="textSecondary">
+                                                    -
+                                                  </Typography>
+                                                )}
                                               </TableCell>
                                             </TableRow>
                                           ))}
@@ -1329,12 +1397,13 @@ const AzureBillingUpload: React.FC = () => {
                           <TableCell>状态</TableCell>
                           <TableCell>总费用</TableCell>
                           <TableCell>错误信息</TableCell>
+                          <TableCell>操作</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {historyData.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={7} align="center">
+                            <TableCell colSpan={8} align="center">
                               <Typography variant="body2" color="textSecondary">
                                 暂无历史记录
                               </Typography>
@@ -1372,6 +1441,22 @@ const AzureBillingUpload: React.FC = () => {
                                   <Typography variant="body2" color="error" sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                     {record.errorMessage}
                                   </Typography>
+                                ) : (
+                                  <Typography variant="body2" color="textSecondary">
+                                    -
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {record.queryStatus === 'success' && record.billingData ? (
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    startIcon={<Assessment />}
+                                    onClick={() => openBillingDetail(record)}
+                                  >
+                                    查看详情
+                                  </Button>
                                 ) : (
                                   <Typography variant="body2" color="textSecondary">
                                     -
@@ -1712,6 +1797,250 @@ const AzureBillingUpload: React.FC = () => {
           <Button onClick={saveJsonConfig} variant="contained">
             保存
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 详细账单查看Dialog */}
+      <Dialog
+        open={billingDetailDialogOpen}
+        onClose={closeBillingDetail}
+        maxWidth="lg"
+        fullWidth
+        slotProps={{
+          paper: { sx: { minHeight: '80vh' } }
+        }}
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Assessment sx={{ mr: 1 }} />
+              详细账单信息
+            </Box>
+            <IconButton onClick={closeBillingDetail} size="small">
+              <Close />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent dividers>
+          {selectedBillingRecord ? (
+            <Box>
+              {/* 基本信息 */}
+              <Card sx={{ mb: 3 }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    <Info sx={{ mr: 1, verticalAlign: 'middle' }} />
+                    查询基本信息
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                    <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                      <Typography variant="body2" color="textSecondary">文件名</Typography>
+                      <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>
+                        {selectedBillingRecord.fileName}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                      <Typography variant="body2" color="textSecondary">应用ID</Typography>
+                      <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>
+                        {selectedBillingRecord.appId}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                      <Typography variant="body2" color="textSecondary">查询时间</Typography>
+                      <Typography variant="body1">
+                        {new Date(selectedBillingRecord.queryDate).toLocaleString()}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                      <Typography variant="body2" color="textSecondary">总费用</Typography>
+                      <Typography variant="h6" color="primary">
+                        ${Number(selectedBillingRecord.totalCost || 0).toFixed(2)} {selectedBillingRecord.currency || 'USD'}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+
+              {/* 详细账单数据 */}
+              {selectedBillingRecord.billingData && (() => {
+                const parsed = parseBillingData(selectedBillingRecord.billingData);
+                if (!parsed) {
+                  return (
+                    <Alert severity="error">
+                      无法解析账单数据
+                    </Alert>
+                  );
+                }
+
+                const { totalCost, subscriptions, resourceNames, serviceDetails, dailyCosts, avgDailyCost, data } = parsed;
+
+                return (
+                  <Box>
+                    {/* 汇总统计 */}
+                    <Card sx={{ mb: 3 }}>
+                      <CardContent>
+                        <Typography variant="h6" gutterBottom>
+                          <TrendingUp sx={{ mr: 1, verticalAlign: 'middle' }} />
+                          费用统计汇总
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                          <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                            <Box sx={{ textAlign: 'center', p: 2, bgcolor: 'primary.light', borderRadius: 1 }}>
+                              <Typography variant="h4" color="primary.contrastText">
+                                ${totalCost.toFixed(2)}
+                              </Typography>
+                              <Typography variant="body2" color="primary.contrastText">
+                                总费用
+                              </Typography>
+                            </Box>
+                          </Box>
+                          <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                            <Box sx={{ textAlign: 'center', p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
+                              <Typography variant="h4" color="success.contrastText">
+                                ${avgDailyCost.toFixed(2)}
+                              </Typography>
+                              <Typography variant="body2" color="success.contrastText">
+                                平均日费用
+                              </Typography>
+                            </Box>
+                          </Box>
+                          <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                            <Box sx={{ textAlign: 'center', p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
+                              <Typography variant="h4" color="info.contrastText">
+                                {dailyCosts.size}
+                              </Typography>
+                              <Typography variant="body2" color="info.contrastText">
+                                查询天数
+                              </Typography>
+                            </Box>
+                          </Box>
+                          <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                            <Box sx={{ textAlign: 'center', p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
+                              <Typography variant="h4" color="warning.contrastText">
+                                {resourceNames.length}
+                              </Typography>
+                              <Typography variant="body2" color="warning.contrastText">
+                                资源数量
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+
+                    {/* 每日费用趋势 */}
+                    <Card sx={{ mb: 3 }}>
+                      <CardContent>
+                        <Typography variant="h6" gutterBottom>
+                          <CalendarToday sx={{ mr: 1, verticalAlign: 'middle' }} />
+                          每日费用分解
+                        </Typography>
+                        <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 300 }}>
+                          <Table size="small" stickyHeader>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>日期</TableCell>
+                                <TableCell align="right">费用 (USD)</TableCell>
+                                <TableCell align="right">占比</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {Array.from(dailyCosts.entries())
+                                .sort(([a], [b]) => a.localeCompare(b))
+                                .map(([date, cost]) => (
+                                <TableRow key={date}>
+                                  <TableCell>{date}</TableCell>
+                                  <TableCell align="right">
+                                    <Typography variant="body2" color={cost > 0 ? 'error' : 'success'}>
+                                      ${cost.toFixed(4)}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Typography variant="body2">
+                                      {((cost / totalCost) * 100).toFixed(1)}%
+                                    </Typography>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* 服务使用详情 */}
+                    <Card>
+                      <CardContent>
+                        <Typography variant="h6" gutterBottom>
+                          <Receipt sx={{ mr: 1, verticalAlign: 'middle' }} />
+                          服务使用详情
+                        </Typography>
+                        <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400 }}>
+                          <Table size="small" stickyHeader>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>服务类型</TableCell>
+                                <TableCell>资源名称</TableCell>
+                                <TableCell>资源组</TableCell>
+                                <TableCell>使用日期</TableCell>
+                                <TableCell align="right">使用量</TableCell>
+                                <TableCell align="right">费用</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {serviceDetails
+                                .sort((a, b) => b.cost - a.cost)
+                                .map((service, index) => (
+                                <TableRow key={index} hover>
+                                  <TableCell>
+                                    <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                      {service.meter}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                      {service.resourceName}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Typography variant="body2">
+                                      {service.resourceGroup}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Typography variant="body2">
+                                      {service.date}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Typography variant="body2">
+                                      {service.usage.toFixed(6)}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Chip
+                                      label={`$${service.cost.toFixed(4)}`}
+                                      color={service.cost > 0 ? 'warning' : 'success'}
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </CardContent>
+                    </Card>
+                  </Box>
+                );
+              })()}
+            </Box>
+          ) : (
+            <Typography>无数据</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeBillingDetail}>关闭</Button>
         </DialogActions>
       </Dialog>
     </Box>
