@@ -137,15 +137,11 @@ export class KeyManager {
   async getKey(region: string = 'eastasia', tag: string = ''): Promise<AzureKey | null> {
     // 检查轮换策略配置
     const rotationStrategy = await this.getConfigValue('key_rotation_strategy', 'sticky');
-    console.log(`[DEBUG] Key rotation strategy: ${rotationStrategy}`);
 
     // 如果配置为轮询策略，使用RoundRobinKeyManager
     if (rotationStrategy === 'round_robin') {
-      console.log('[DEBUG] Using round-robin key selection strategy');
       return await this.roundRobinManager.getKeyWithRoundRobin(region, tag);
     }
-    
-    logger.info('Using sticky key selection strategy');
     
     // 默认使用粘性策略
     const lockKey = `getkey:${region}`;

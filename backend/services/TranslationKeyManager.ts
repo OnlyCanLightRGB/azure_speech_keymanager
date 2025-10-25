@@ -138,15 +138,11 @@ export class TranslationKeyManager {
   async getKey(region: string = 'eastasia', tag: string = ''): Promise<TranslationKey | null> {
     // 检查轮换策略配置 - 与语音密钥使用统一的配置项
     const rotationStrategy = await this.getConfigValue('key_rotation_strategy', 'sticky');
-    logger.info(`Translation key rotation strategy: ${rotationStrategy}`);
-    
+
     // 如果配置为轮询策略，使用轮询方法
     if (rotationStrategy === 'round_robin') {
-      logger.info('Using round-robin translation key selection strategy');
       return await this.getKeyWithRoundRobin(region, tag);
     }
-    
-    logger.info('Using sticky translation key selection strategy');
     
     // 默认使用粘性策略
     const lockKey = `getkey:${region}`;

@@ -1054,4 +1054,96 @@ router.post('/subscriptions/:subscriptionId/execute', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/billing-azure/download-billing-json/:configId
+ * 下载指定配置的账单JSON文件
+ */
+router.get('/download-billing-json/:configId', async (req, res) => {
+  try {
+    const configId = parseInt(req.params.configId);
+    console.log('Download billing JSON for configId:', configId);
+
+    if (!autoBillingService) {
+      return res.status(503).json({
+        success: false,
+        error: 'AutoBillingService not initialized'
+      });
+    }
+
+    // 获取配置信息 - 不传递参数以获取所有配置
+    const configs = await autoBillingService.getJsonConfigs();
+    const config = configs.find(c => c.id === configId);
+
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        error: 'Configuration not found'
+      });
+    }
+
+    // 获取该配置的最新账单历史记录
+    const history = await autoBillingService.getJsonBillingHistory(config.fileName, undefined, undefined, 1);
+
+    if (!history || history.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No billing data found for this configuration'
+      });
+    }
+
+    const latestRecord = history[0];
+
+    // 验证记录数据完整性
+    if (!latestRecord) {
+      return res.status(404).json({
+        success: false,
+        error: 'Invalid billing record data'
+      });
+    }
+
+    // 构建返回的JSON数据，使用安全的属性访问
+    const billingData = {
+      configInfo: {
+        id: config.id,
+        configName: config.configName,
+        displayName: config.displayName,
+        subscriptionId: latestRecord.subscriptionId || 'N/A',
+        lastQueryTime: config.lastQueryTime,
+        status: config.status
+      },
+      billingData: {
+        queryDate: latestRecord.queryDate,
+        totalCost: latestRecord.totalCost,
+        currency: latestRecord.currency,
+        queryStatus: latestRecord.queryStatus,
+        subscriptionId: latestRecord.subscriptionId || 'N/A',
+        fileName: latestRecord.fileName,
+        filePath: latestRecord.filePath,
+        appId: latestRecord.appId,
+        tenantId: latestRecord.tenantId,
+        displayName: latestRecord.displayName,
+        errorMessage: latestRecord.errorMessage,
+        lastModified: latestRecord.lastModified,
+        billingData: latestRecord.billingData ? JSON.parse(latestRecord.billingData) : null
+      },
+      metadata: {
+        exportTime: new Date().toISOString(),
+        exportedBy: 'Azure Speech Key Manager',
+        version: '1.0',
+        description: 'Azure Cognitive Services billing data export'
+      }
+    };
+
+    return res.json(billingData);
+
+  } catch (error) {
+    console.error('Error downloading billing JSON:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to download billing JSON',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 export { router as billingAzureRouter };
